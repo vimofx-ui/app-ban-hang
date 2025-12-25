@@ -10,7 +10,7 @@ export function LoginPage() {
     const navigate = useNavigate();
     const { login, loading, error, clearError } = useAuthStore();
 
-    const [phone, setPhone] = useState('');
+    const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
 
@@ -18,7 +18,7 @@ export function LoginPage() {
         e.preventDefault();
         clearError();
 
-        const success = await login(phone, password);
+        const success = await login(email, password);
         if (success) {
             navigate('/');
         }
@@ -82,16 +82,16 @@ export function LoginPage() {
                             </div>
                         )}
 
-                        {/* Phone Number */}
+                        {/* Email */}
                         <div style={{ marginBottom: '20px' }}>
                             <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', color: '#374151', marginBottom: '6px' }}>
-                                Số điện thoại
+                                Email
                             </label>
                             <input
-                                type="tel"
-                                value={phone}
-                                onChange={(e) => setPhone(e.target.value)}
-                                placeholder="0904724477"
+                                type="email"
+                                value={email}
+                                onChange={(e) => setEmail(e.target.value)}
+                                placeholder="you@example.com"
                                 required
                                 style={{
                                     width: '100%',

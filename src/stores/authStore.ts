@@ -23,16 +23,16 @@ interface AuthState {
 
     // Actions
     login: (email: string, password: string) => Promise<boolean>;
-    register: (email: string, password: string, name: string, role?: 'admin' | 'staff') => Promise<boolean>;
+    register: (email: string, password: string, name: string, role?: 'admin' | 'staff', phone?: string) => Promise<boolean>;
     logout: () => Promise<void>;
     resetPassword: (email: string) => Promise<boolean>;
     checkSession: () => Promise<void>;
     clearError: () => void;
 }
 
-// Users for when Supabase is not configured
+// Users for when Supabase is not configured (demo mode)
 const DEMO_USERS: Array<{ id: string; email: string; password: string; name: string; role: 'admin' | 'staff' }> = [
-    { id: 'admin-1', email: '0904724477', password: 'Vandan1988', name: 'Admin', role: 'admin' },
+    { id: 'admin-1', email: 'storelypos@gmail.com', password: 'Vandan1988', name: 'Admin', role: 'admin' },
 ];
 
 export const useAuthStore = create<AuthState>()(
@@ -85,13 +85,13 @@ export const useAuthStore = create<AuthState>()(
                         const { data: profile } = await supabase
                             .from('user_profiles')
                             .select('*')
-                            .eq('auth_user_id', data.user.id)
+                            .eq('id', data.user.id)
                             .single();
 
                         const user: AuthUser = {
                             id: data.user.id,
                             email: data.user.email || '',
-                            name: profile?.name || data.user.email?.split('@')[0] || 'User',
+                            name: profile?.full_name || data.user.email?.split('@')[0] || 'User',
                             role: profile?.role || 'staff',
                             created_at: data.user.created_at,
                             is_active: profile?.is_active ?? true,
@@ -108,7 +108,7 @@ export const useAuthStore = create<AuthState>()(
                 }
             },
 
-            register: async (email: string, password: string, name: string, role: 'admin' | 'staff' = 'staff') => {
+            register: async (email: string, password: string, name: string, role: 'admin' | 'staff' = 'staff', phone?: string) => {
                 set({ loading: true, error: null });
 
                 try {
@@ -132,6 +132,7 @@ export const useAuthStore = create<AuthState>()(
                         password,
                         options: {
                             data: { name, role },
+                            emailRedirectTo: `${window.location.origin}/login`,
                         },
                     });
 
@@ -141,12 +142,12 @@ export const useAuthStore = create<AuthState>()(
                     }
 
                     if (data.user) {
-                        // Create user profile
+                        // Create user profile with phone
+                        // Note: Schema uses id (FK to auth.users), full_name, and we add email/phone
                         await supabase.from('user_profiles').insert({
-                            auth_user_id: data.user.id,
-                            name,
+                            id: data.user.id,
+                            full_name: name,
                             role,
-                            email,
                             is_active: true,
                         });
 
@@ -218,13 +219,13 @@ export const useAuthStore = create<AuthState>()(
                     const { data: profile } = await supabase
                         .from('user_profiles')
                         .select('*')
-                        .eq('auth_user_id', session.user.id)
+                        .eq('id', session.user.id)
                         .single();
 
                     const user: AuthUser = {
                         id: session.user.id,
                         email: session.user.email || '',
-                        name: profile?.name || session.user.email?.split('@')[0] || 'User',
+                        name: profile?.full_name || session.user.email?.split('@')[0] || 'User',
                         role: profile?.role || 'staff',
                         created_at: session.user.created_at,
                         is_active: profile?.is_active ?? true,

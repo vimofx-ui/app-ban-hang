@@ -13,6 +13,7 @@ export function RegisterPage() {
     const [formData, setFormData] = useState({
         name: '',
         email: '',
+        phone: '',
         password: '',
         confirmPassword: '',
     });
@@ -42,7 +43,7 @@ export function RegisterPage() {
 
         if (!validateForm()) return;
 
-        const success = await register(formData.email, formData.password, formData.name);
+        const success = await register(formData.email, formData.password, formData.name, 'staff', formData.phone);
         if (success) {
             navigate('/');
         }
@@ -148,6 +149,19 @@ export function RegisterPage() {
                                 onChange={handleChange}
                                 placeholder="you@example.com"
                                 required
+                                style={inputStyle}
+                            />
+                        </div>
+
+                        {/* Phone (optional for profile) */}
+                        <div style={{ marginBottom: '20px' }}>
+                            <label style={labelStyle}>Số điện thoại <span style={{ color: '#9ca3af', fontWeight: 'normal' }}>(tùy chọn)</span></label>
+                            <input
+                                type="tel"
+                                name="phone"
+                                value={formData.phone}
+                                onChange={handleChange}
+                                placeholder="0901234567"
                                 style={inputStyle}
                             />
                         </div>

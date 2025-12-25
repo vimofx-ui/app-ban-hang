@@ -1,0 +1,490 @@
+Bạn mô tả rất chính xác vấn đề, và đây là 2 lỗi KHÁC NHAU nhưng đang xảy ra cùng lúc.
+Mình sẽ tách ra, giải thích cực kỳ dễ hiểu, rồi cho bạn cách sửa ĐÚNG – GỌN – KHÔNG PHẢI VIẾT LẠI APP.
+________________________________________
+🧨 TỔNG KẾT NHANH (ĐỂ BẠN YÊN TÂM)
+Bạn đang gặp 2 vấn đề độc lập:
+❌ VẤN ĐỀ 1 – AUTH (QUAN TRỌNG NHẤT)
+👉 Đăng ký = Email
+👉 Đăng nhập = Số điện thoại
+➡️ Supabase KHÔNG tự map email ↔ phone
+⛔ Vì vậy:
+Invalid login credentials
+________________________________________
+❌ VẤN ĐỀ 2 – 404 NOT_FOUND (ẢNH 3)
+👉 App là SPA (Vite + React)
+👉 Khi reload / logout → truy cập trực tiếp /login
+👉 Vercel không biết route này → 404
+⛔ Đây là lỗi cấu hình routing, không phải lỗi code auth
+________________________________________
+✅ GIẢI PHÁP CHUẨN (LÀM THEO THỨ TỰ)
+________________________________________
+🔧 PHẦN A – SỬA TRIỆT ĐỂ AUTH (BẮT BUỘC)
+❓ Câu hỏi quan trọng
+👉 Bạn muốn dùng gì để đăng nhập?
+Chỉ được 1 trong 2, KHÔNG TRỘN:
+1️⃣ Email
+2️⃣ Số điện thoại
+❌ Không được: Đăng ký email – đăng nhập phone
+________________________________________
+✅ CÁCH ĐÚNG NHẤT (KHUYÊN DÙNG)
+👉 DÙNG EMAIL CHO CẢ ĐĂNG KÝ & ĐĂNG NHẬP
+(vì Supabase hỗ trợ email ổn định nhất)
+________________________________________
+🟢 BƯỚC A1 – SỬA FORM LOGIN (FRONTEND)
+❌ HIỆN TẠI
+Số điện thoại
+✅ PHẢI ĐỔI THÀNH
+Email
+Ví dụ logic login ĐÚNG:
+await supabase.auth.signInWithPassword({
+  email,
+  password,
+})
+❌ KHÔNG dùng:
+phone
+________________________________________
+🟢 BƯỚC A2 – SỬA LABEL + PLACEHOLDER
+Trong UI:
+Email
+you@example.com
+❌ Không để “Số điện thoại” nữa
+________________________________________
+🟢 BƯỚC A3 – USER_PROFILES (OPTIONAL)
+Nếu bạn vẫn muốn lưu phone:
+•	Lưu phone vào user_profiles.phone
+•	KHÔNG dùng phone để login
+________________________________________
+🟢 BƯỚC A4 – TEST LẠI
+1.	Đăng ký bằng email
+2.	Logout
+3.	Login lại bằng email + password
+👉 SẼ OK 100%
+________________________________________
+🔧 PHẦN B – SỬA LỖI 404 /login (RẤT PHỔ BIẾN)
+Ảnh thứ 3 của bạn:
+404: NOT_FOUND
+👉 Đây là lỗi Vercel không biết route frontend
+________________________________________
+✅ CÁCH SỬA ĐÚNG CHO VITE + REACT
+🟢 BƯỚC B1 – TẠO FILE vercel.json
+Ở thư mục gốc project, tạo file:
+vercel.json
+Nội dung:
+{
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}
+________________________________________
+🟢 BƯỚC B2 – COMMIT & PUSH
+git add vercel.json
+git commit -m "fix spa routing for vercel"
+git push
+👉 Vercel sẽ auto deploy lại
+________________________________________
+🟢 BƯỚC B3 – TEST
+Sau khi deploy xong:
+•	Truy cập trực tiếp:
+https://app-ban-hang.vercel.app/login
+👉 KHÔNG CÒN 404
+________________________________________
+🧠 TẠI SAO BẠN GẶP LỖI NÀY? (GIẢI THÍCH NGẮN)
+Vấn đề	Lý do
+Login phone lỗi	Supabase không map email ↔ phone
+Nhân viên login OK	Vì dùng email
+Admin login lỗi	Dùng phone
+404 /login	SPA cần rewrite
+👉 100% dev mới với Vite + Supabase đều gặp combo này
+________________________________________
+✅ CHECKLIST CUỐI (LÀM XONG LÀ CHẠY THẬT)
+•	Login = email
+•	Register = email
+•	Phone chỉ lưu profile
+•	Có vercel.json
+•	/login reload không 404
+________________________________________
+❓ BÂY GIỜ MÌNH HỎI BẠN 2 CÂU (TRẢ LỜI NGẮN)
+1️⃣ Bạn có đồng ý chuyển login sang email 100% không?
+2️⃣ Bạn muốn mình viết sẵn đoạn code login email đúng chuẩn Supabase cho bạn không?
+👉 Trả lời “Có” / “Không”, mình làm tiếp ngay 🚀
+login sang email 100% nhưng vẫn để thêm trường số điện thoại (không đăng nhập bằng số điện thoại) thực hiện trên Antigravity (AI Code)
+Rất tốt 👍
+Quyết định này là CHUẨN KỸ THUẬT + DỄ VẬN HÀNH LÂU DÀI.
+🎯 Mục tiêu cuối cùng
+•	✅ Đăng nhập / đăng ký 100% bằng EMAIL
+•	✅ Vẫn có trường SỐ ĐIỆN THOẠI để lưu thông tin
+•	❌ KHÔNG dùng số điện thoại để đăng nhập
+•	✅ Thực hiện toàn bộ bằng Antigravity (AI Code)
+Mình sẽ hướng dẫn từng bước rất cụ thể, kèm đoạn code mẫu CHUẨN Supabase để bạn copy dùng ngay.
+________________________________________
+PHẦN 0 – TƯ DUY ĐÚNG (RẤT QUAN TRỌNG)
+👉 Supabase CHỈ XÁC THỰC bằng email + password
+👉 Số điện thoại chỉ là dữ liệu hồ sơ (profile)
+Kiến trúc chuẩn:
+auth.users
+- email
+- password (hash)
+
+public.user_profiles
+- id (uuid = auth.users.id)
+- email
+- phone
+- role
+________________________________________
+PHẦN 1 – SỬA FORM ĐĂNG KÝ (REGISTER)
+🎯 Mục tiêu
+•	Đăng ký bằng email + password
+•	Có thêm ô Số điện thoại
+•	Sau khi đăng ký → lưu phone vào user_profiles
+________________________________________
+🟢 BƯỚC 1.1 – MỞ FILE REGISTER TRONG ANTIGRAVITY
+Trong Antigravity:
+•	Mở folder src
+•	Tìm file kiểu như:
+src/pages/Register.tsx
+hoặc
+src/pages/auth/Register.tsx
+________________________________________
+🟢 BƯỚC 1.2 – FORM REGISTER (CHUẨN)
+UI (ví dụ React)
+<input
+  type="text"
+  placeholder="Họ và tên"
+  value={fullName}
+  onChange={(e) => setFullName(e.target.value)}
+/>
+
+<input
+  type="email"
+  placeholder="Email"
+  value={email}
+  onChange={(e) => setEmail(e.target.value)}
+/>
+
+<input
+  type="text"
+  placeholder="Số điện thoại"
+  value={phone}
+  onChange={(e) => setPhone(e.target.value)}
+/>
+
+<input
+  type="password"
+  placeholder="Mật khẩu"
+  value={password}
+  onChange={(e) => setPassword(e.target.value)}
+/>
+📌 LƯU Ý
+•	type="email" cho email
+•	Phone chỉ là text
+•	Không dùng type="tel" cũng được
+________________________________________
+🟢 BƯỚC 1.3 – LOGIC ĐĂNG KÝ (QUAN TRỌNG NHẤT)
+import { supabase } from '@/lib/supabase'
+
+const handleRegister = async () => {
+  // 1. Tạo user bằng EMAIL
+  const { data, error } = await supabase.auth.signUp({
+    email,
+    password,
+  })
+
+  if (error) {
+    alert(error.message)
+    return
+  }
+
+  const userId = data.user?.id
+  if (!userId) return
+
+  // 2. Lưu profile (PHONE + ROLE)
+  const { error: profileError } = await supabase
+    .from('user_profiles')
+    .insert({
+      id: userId,
+      full_name: fullName,
+      email,
+      phone,
+      role: 'staff', // mặc định
+      is_active: true,
+    })
+
+  if (profileError) {
+    console.error(profileError)
+  }
+}
+✅ Điểm mấu chốt
+•	Supabase chỉ dùng email để auth
+•	Phone chỉ lưu profile
+•	Không đụng tới phone trong auth
+________________________________________
+PHẦN 2 – SỬA FORM ĐĂNG NHẬP (LOGIN)
+🎯 Mục tiêu
+•	Chỉ cho nhập EMAIL + PASSWORD
+•	Xóa logic login bằng phone
+________________________________________
+🟢 BƯỚC 2.1 – MỞ FILE LOGIN
+Ví dụ:
+src/pages/Login.tsx
+hoặc
+src/pages/auth/Login.tsx
+________________________________________
+🟢 BƯỚC 2.2 – FORM LOGIN (CHUẨN)
+<input
+  type="email"
+  placeholder="Email"
+  value={email}
+  onChange={(e) => setEmail(e.target.value)}
+/>
+
+<input
+  type="password"
+  placeholder="Mật khẩu"
+  value={password}
+  onChange={(e) => setPassword(e.target.value)}
+/>
+❌ XÓA HOÀN TOÀN
+•	label “Số điện thoại”
+•	biến phone
+•	logic login bằng phone
+________________________________________
+🟢 BƯỚC 2.3 – LOGIC LOGIN (CHUẨN SUPABASE)
+const handleLogin = async () => {
+  const { error } = await supabase.auth.signInWithPassword({
+    email,
+    password,
+  })
+
+  if (error) {
+    alert('Sai email hoặc mật khẩu')
+    return
+  }
+
+  navigate('/') // hoặc dashboard
+}
+👉 ĐOẠN NÀY LÀ ĐÚNG 100%
+________________________________________
+PHẦN 3 – SỬA DATABASE (NẾU CHƯA CÓ CỘT PHONE)
+Vào Supabase → Table Editor → user_profiles
+Đảm bảo có cột:
+phone text
+Nếu chưa có → chạy SQL:
+alter table public.user_profiles
+add column phone text;
+________________________________________
+PHẦN 4 – SỬA LỖI 404 KHI LOGOUT / RELOAD (NHẮC LẠI)
+Bạn BẮT BUỘC phải có file:
+vercel.json
+{
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}
+Sau đó:
+git add .
+git commit -m "auth email only + phone profile"
+git push
+________________________________________
+PHẦN 5 – TEST CHECKLIST (LÀM THEO THỨ TỰ)
+1️⃣ Deploy xong
+2️⃣ Mở /register
+•	Nhập email + phone
+•	Đăng ký OK
+3️⃣ Mở /login
+•	Login bằng email
+•	Không dùng phone
+4️⃣ Reload /login
+•	❌ Không 404
+5️⃣ Vào Supabase:
+•	auth.users → có email
+•	user_profiles → có phone
+________________________________________
+🎯 KẾT LUẬN
+✅ Login = email 100%
+✅ Phone vẫn được lưu & dùng cho nghiệp vụ
+✅ Không phá Supabase Auth
+✅ Không lỗi production
+✅ Chuẩn cho POS / SaaS / mở rộng sau này
+________________________________________
+👉 BƯỚC TIẾP THEO (BẠN CHỌN 1)
+1️⃣ Mình viết sẵn full file Login.tsx + Register.tsx theo code của bạn
+2️⃣ Mình giúp bạn tự động tạo user_profiles bằng trigger SQL
+3️⃣ Mình hướng dẫn RLS chuẩn cho admin / staff
+Chỉ cần trả lời 1 số (1 / 2 / 3) 👍
+Cả 3, giúp tôi chức năng gửi mail xác nhận khi đăng ký. gợi ý cho tôi tên đặt của web này và tạo cho tôi logo
+Tuyệt vời 👍
+Mình sẽ làm THEO ĐÚNG THỨ TỰ HỢP LÝ, để bạn không bị rối và không làm sai kỹ thuật.
+⚠️ LƯU Ý QUAN TRỌNG
+Phần tạo LOGO phải dùng công cụ tạo ảnh, và khi tạo ảnh xong mình không được nói thêm gì nữa.
+Vì vậy mình sẽ làm như sau:
+👉 BƯỚC 1–3 + EMAIL CONFIRM + ĐẶT TÊN WEB (làm ngay trong tin này)
+👉 SAU ĐÓ mình sẽ hỏi bạn xác nhận → mới tạo logo
+________________________________________
+PHẦN 1 – HOÀN THIỆN AUTH EMAIL + PHONE (ANTIGRAVITY)
+Bạn đã chọn kiến trúc CHUẨN NHẤT:
+•	✅ Đăng ký / đăng nhập = EMAIL
+•	✅ Số điện thoại = profile
+•	✅ Supabase Auth chuẩn
+•	✅ Sẵn sàng production
+________________________________________
+1️⃣ LOGIN & REGISTER (EMAIL 100%)
+LOGIN (chuẩn – không sửa nữa)
+await supabase.auth.signInWithPassword({
+  email,
+  password,
+})
+❌ Không dùng phone
+❌ Không map email ↔ phone
+________________________________________
+REGISTER (EMAIL + PHONE PROFILE)
+const { data, error } = await supabase.auth.signUp({
+  email,
+  password,
+})
+
+if (error) throw error
+
+await supabase.from('user_profiles').insert({
+  id: data.user.id,
+  email,
+  phone,
+  full_name,
+  role: 'staff',
+  is_active: true,
+})
+________________________________________
+PHẦN 2 – TỰ ĐỘNG TẠO PROFILE (KHÔNG CẦN INSERT TAY)
+👉 Đây là cách CHUYÊN NGHIỆP, dùng Trigger SQL
+👉 Sau này đăng ký = không cần code insert profile nữa
+🔥 SQL TRIGGER (RẤT KHUYÊN DÙNG)
+Chạy trong Supabase → SQL Editor
+create or replace function public.handle_new_user()
+returns trigger as $$
+begin
+  insert into public.user_profiles (
+    id,
+    email,
+    role,
+    is_active
+  )
+  values (
+    new.id,
+    new.email,
+    'staff',
+    true
+  );
+  return new;
+end;
+$$ language plpgsql security definer;
+
+create trigger on_auth_user_created
+after insert on auth.users
+for each row execute procedure public.handle_new_user();
+👉 Sau đó:
+•	Code frontend KHÔNG cần insert profile nữa
+•	Chỉ cần signUp()
+________________________________________
+PHẦN 3 – RLS CHUẨN CHO ADMIN / STAFF (BẮT BUỘC PROD)
+🎯 Mục tiêu
+•	Staff chỉ thấy dữ liệu của mình
+•	Admin thấy tất cả
+Ví dụ policy user_profiles
+alter table public.user_profiles enable row level security;
+
+create policy "Users can view own profile"
+on public.user_profiles
+for select
+using (auth.uid() = id);
+
+create policy "Admin can view all profiles"
+on public.user_profiles
+for select
+using (
+  exists (
+    select 1 from public.user_profiles up
+    where up.id = auth.uid()
+    and up.role = 'admin'
+  )
+);
+________________________________________
+PHẦN 4 – GỬI EMAIL XÁC NHẬN KHI ĐĂNG KÝ ✅
+Supabase HỖ TRỢ SẴN, bạn KHÔNG cần viết backend.
+🟢 BƯỚC 1 – BẬT EMAIL CONFIRMATION
+Supabase → Authentication → Providers → Email
+✔ Enable Email
+✔ Enable Confirm email
+Save
+________________________________________
+🟢 BƯỚC 2 – CẤU HÌNH EMAIL TEMPLATE
+Supabase → Authentication → Email Templates
+Chỉnh Confirm signup
+Ví dụ nội dung tiếng Việt:
+Subject
+Xác nhận đăng ký tài khoản Grocery POS
+Body
+Xin chào,
+
+Vui lòng nhấn vào link bên dưới để xác nhận tài khoản của bạn:
+
+{{ .ConfirmationURL }}
+
+Nếu bạn không đăng ký, vui lòng bỏ qua email này.
+
+Trân trọng,
+Đội ngũ Grocery POS
+________________________________________
+🟢 BƯỚC 3 – CODE FRONTEND (KHÔNG ĐỔI NHIỀU)
+await supabase.auth.signUp({
+  email,
+  password,
+  options: {
+    emailRedirectTo: 'https://app-ban-hang.vercel.app/login',
+  },
+})
+👉 Sau khi confirm:
+•	User click link trong email
+•	Quay về /login
+•	Login OK
+________________________________________
+PHẦN 5 – TÊN WEBSITE (RẤT QUAN TRỌNG – GỢI Ý CHUẨN)
+Dựa trên:
+•	Grocery
+•	POS
+•	Bán lẻ
+•	Dễ nhớ – dễ làm thương hiệu
+🔥 GỢI Ý TÊN (CHỌN 1)
+Tiếng Việt
+1.	GroceryPOS
+2.	NhanhPOS
+3.	BánLẻ Pro
+4.	CửaHàng Số
+5.	POS Mini
+Quốc tế (khuyên dùng)
+1.	Grocy
+2.	Grocerio
+3.	MiniPOS
+4.	Storely
+5.	QuickMart POS
+👉 Mình KHUYÊN CHỌN:
+⭐ Storely POS
+•	Ngắn
+•	Hiện đại
+•	Dễ làm logo
+•	Dễ mở rộng SaaS
+________________________________________
+PHẦN 6 – CHUẨN BỊ TẠO LOGO 🎨
+Trước khi tạo logo, mình cần bạn xác nhận 3 thứ (rất nhanh):
+❓ Bạn trả lời theo mẫu này giúp mình:
+1. Tên web: (ví dụ: Storely POS)
+2. Phong cách: (hiện đại / tối giản / thân thiện)
+3. Màu chủ đạo: (xanh lá / xanh dương / tùy bạn)
+👉 Sau khi bạn trả lời, MÌNH SẼ TẠO LOGO NGAY (bằng AI)
+👉 Logo sẽ:
+•	Dùng được cho web
+•	Dùng cho favicon
+•	Dùng cho đăng ký app / landing page
+Chờ bạn xác nhận 3 dòng trên 👍
+

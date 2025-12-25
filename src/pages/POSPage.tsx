@@ -195,66 +195,68 @@ export function POSPage() {
     // Print checkbox state - defaults to true
     const [shouldPrintReceipt, setShouldPrintReceipt] = useState(true);
 
-    // Fullscreen toggle with user-friendly fallback
+    // Fullscreen toggle with robust fallback
     const toggleFullscreen = useCallback(() => {
         console.log('Fullscreen button clicked');
 
-        // Check if we're in pseudo-fullscreen first
         const root = document.getElementById('root');
+
+        // Check if we're in pseudo-fullscreen - toggle OFF
         if (root?.classList.contains('pseudo-fullscreen')) {
-            // Exit pseudo-fullscreen
             root.classList.remove('pseudo-fullscreen');
             setIsFullscreen(false);
             console.log('Exited pseudo-fullscreen');
             return;
         }
 
-        if (!document.fullscreenElement) {
-            // Try native fullscreen first
-            const elem = document.documentElement;
-
-            const requestFS = elem.requestFullscreen ||
-                (elem as any).webkitRequestFullscreen ||
-                (elem as any).mozRequestFullScreen ||
-                (elem as any).msRequestFullscreen;
-
-            if (requestFS) {
-                const promise = requestFS.call(elem);
-                if (promise && promise.catch) {
-                    promise.catch((err: any) => {
-                        console.error('Native fullscreen failed:', err);
-
-                        // Apply pseudo-fullscreen CSS fallback
-                        if (root) {
-                            root.classList.add('pseudo-fullscreen');
-                            setIsFullscreen(true);
-                            console.log('Applied pseudo-fullscreen fallback');
-                        }
-
-                        // Show helpful message to user
-                        const message = `🖥️ Sử dụng chế độ mở rộng tạm thời!\n\n` +
-                            `💡 Để toàn màn hình thực sự (ẩn thanh địa chỉ), vui lòng bấm F11.\n\n` +
-                            `📌 Hoặc cấp quyền: Settings → Site Settings → Fullscreen → Allow`;
-                        alert(message);
-                    });
-                } else {
-                    // Old browsers without promise
-                    alert('🖥️ Vui lòng bấm phím F11 để vào chế độ toàn màn hình.');
-                }
-            } else {
-                alert('❌ Trình duyệt không hỗ trợ chế độ toàn màn hình.\n\n💡 Vui lòng bấm phím F11.');
-            }
-        } else {
-            // Exit native fullscreen
+        // Check if we're in native fullscreen - toggle OFF
+        if (document.fullscreenElement) {
             const exitFS = document.exitFullscreen ||
                 (document as any).webkitExitFullscreen ||
                 (document as any).mozCancelFullScreen ||
                 (document as any).msExitFullscreen;
-
             if (exitFS) {
-                exitFS.call(document).catch((err: any) => {
-                    console.error('Fullscreen exit failed:', err);
-                });
+                exitFS.call(document).catch(console.error);
+            }
+            return;
+        }
+
+        // ENTER FULLSCREEN MODE
+        const elem = document.documentElement;
+        const requestFS = elem.requestFullscreen ||
+            (elem as any).webkitRequestFullscreen ||
+            (elem as any).mozRequestFullScreen ||
+            (elem as any).msRequestFullscreen;
+
+        // Apply pseudo-fullscreen immediately for instant feedback
+        if (root) {
+            root.classList.add('pseudo-fullscreen');
+            setIsFullscreen(true);
+            console.log('Applied pseudo-fullscreen for instant feedback');
+        }
+
+        // Then try native fullscreen (will override pseudo if successful)
+        if (requestFS) {
+            try {
+                const promise = requestFS.call(elem);
+                if (promise && promise.then) {
+                    promise.then(() => {
+                        // Native fullscreen succeeded - remove pseudo class
+                        if (root) {
+                            root.classList.remove('pseudo-fullscreen');
+                        }
+                        console.log('Native fullscreen activated');
+                    }).catch((err: any) => {
+                        console.error('Native fullscreen failed:', err);
+                        // Pseudo-fullscreen already applied, show tip
+                        alert(
+                            '🖥️ Đang dùng chế độ mở rộng tạm thời!\n\n' +
+                            '💡 Bấm F11 để toàn màn hình thực sự (ẩn thanh địa chỉ).'
+                        );
+                    });
+                }
+            } catch (e) {
+                console.error('Fullscreen error:', e);
             }
         }
     }, []);
