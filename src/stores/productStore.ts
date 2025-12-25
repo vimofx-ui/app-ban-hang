@@ -98,16 +98,17 @@ export const useProductStore = create<ProductState>()(
                     created_by_name: user?.name || user?.email || 'Unknown', // Store name for display
                 };
 
-                // Remove undefined values
+                // Remove undefined values and fields not in database
                 if (!newProduct.image_url) delete newProduct.image_url;
                 if (!newProduct.sku) delete newProduct.sku;
                 if (!newProduct.barcode) delete newProduct.barcode;
+                const { created_by_name, ...productToInsert } = newProduct; // Exclude virtual fields
 
                 if (isSupabaseConfigured() && supabase) {
                     try {
                         const { error } = await supabase
                             .from('products')
-                            .insert(newProduct);
+                            .insert(productToInsert);
 
                         if (error) throw error;
 
