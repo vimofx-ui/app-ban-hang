@@ -302,8 +302,30 @@ export const useUserStore = create<UserState>()(
             },
 
             deleteUser: async (id) => {
-                // Soft delete usually just setting is_active = false
-                await get().updateUser(id, { is_active: false });
+                // Hard delete from Supabase and local state
+                try {
+                    if (supabase) {
+                        const { error } = await supabase
+                            .from('user_profiles')
+                            .delete()
+                            .eq('id', id);
+
+                        if (error) {
+                            console.error('Failed to delete user from Supabase:', error);
+                            throw error;
+                        }
+                    }
+
+                    // Update local state
+                    set(state => ({
+                        users: state.users.filter(u => u.id !== id)
+                    }));
+
+                    console.log('User deleted successfully:', id);
+                } catch (err: any) {
+                    console.error('deleteUser error:', err);
+                    throw err;
+                }
             },
 
             // --- ROLE ACTIONS ---

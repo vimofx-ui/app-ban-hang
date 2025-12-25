@@ -1,14 +1,16 @@
--- Delete duplicate admin account
--- First, check which accounts exist
-SELECT id, full_name, role, email, created_at 
+-- Xóa tài khoản trùng "Quản trị viên" từ Supabase
+-- ============================================
+
+-- Bước 1: Xem danh sách người dùng hiện tại
+SELECT id, full_name, email, role, is_active, created_at 
 FROM user_profiles 
 ORDER BY created_at;
 
--- To delete "Quản trị viên" account (keeping "Admin"), run:
+-- Bước 2: Xóa "Quản trị viên" (giữ lại "Admin")
 DELETE FROM user_profiles WHERE full_name = 'Quản trị viên';
 
--- OR if you want to delete by ID (safer), first get the ID from above query, then:
--- DELETE FROM user_profiles WHERE id = 'PUT_THE_ID_HERE';
+-- Bước 3: Kiểm tra lại - Chỉ còn 1 tài khoản
+SELECT id, full_name, email, role FROM user_profiles;
 
--- IMPORTANT: If this user has related records in other tables, you may need to delete those first
--- or update the foreign key constraints.
+-- LƯU Ý: Nếu lỗi foreign key, chạy lệnh sau trước:
+-- DELETE FROM work_shifts WHERE user_id IN (SELECT id FROM user_profiles WHERE full_name = 'Quản trị viên');
