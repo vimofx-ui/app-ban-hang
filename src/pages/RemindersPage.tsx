@@ -271,10 +271,10 @@ function ReminderPageContent() {
             </div>
 
             {reminders.length === 0 && !isAddMode && (
-                <div className="flex flex-col items-center justify-center py-16 text-center w-full min-h-[400px]">
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '64px 16px', textAlign: 'center', width: '100%', minHeight: '400px' }}>
                     <div className="w-20 h-20 bg-gray-100 text-gray-400 rounded-full flex items-center justify-center text-4xl mb-4">🔔</div>
                     <h3 className="text-lg font-medium text-gray-900 mb-2">Chưa có nhắc nhở nào</h3>
-                    <p className="text-gray-500 max-w-md text-center mb-6 px-4">Tạo nhắc nhở để hệ thống tự động thông báo công việc cho nhân viên.</p>
+                    <p style={{ color: '#6b7280', maxWidth: '28rem', textAlign: 'center', marginBottom: '24px', padding: '0 16px', width: '100%' }}>Tạo nhắc nhở để hệ thống tự động thông báo công việc cho nhân viên.</p>
                     <button
                         onClick={() => setIsAddMode(true)}
                         className="bg-primary text-white px-6 py-2.5 rounded-xl font-medium shadow hover:bg-primary/90 whitespace-nowrap"

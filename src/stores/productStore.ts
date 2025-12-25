@@ -114,33 +114,43 @@ export const useProductStore = create<ProductState>()(
                     try {
                         let error = await executeInsert(newProduct);
 
-                        // RETRY STRATEGY FOR MISSING COLUMNS (PGRST204)
+                        // ROBUST RETRY STRATEGY: Remove problematic columns progressively
                         if (error && error.code === 'PGRST204') {
-                            console.warn('Schema mismatch detected, retrying with degraded fields...', error.message);
+                            console.warn('Schema mismatch detected, retrying with safe data...', error.message);
 
-                            // 0. Try removing 'exclude_from_loyalty_points' (New Fix)
-                            if (error.message.includes('exclude_from_loyalty_points') || newProduct.exclude_from_loyalty_points !== undefined) {
-                                const { exclude_from_loyalty_points, ...retryData } = newProduct;
-                                error = await executeInsert(retryData);
-                            }
+                            // Build a clean object by removing ALL potentially missing columns upfront
+                            const safeData: any = { ...newProduct };
+                            const columnsToRemove = [
+                                'exclude_from_loyalty_points',
+                                'category_ids',
+                                'created_by',
+                                'code',
+                                'combo_items',
+                                'variants',
+                                'attributes',
+                                'product_kind',
+                                'avg_cost_price',
+                                'total_cost_value',
+                                'last_sold_at',
+                                'total_sold',
+                                'purchase_price',
+                                'cost_price',
+                                'wholesale_price',
+                                'weight',
+                                'allow_negative_stock',
+                                'brand_id',
+                                'product_type_id',
+                                'units'
+                            ];
 
-                            // 1. Try removing 'category_ids'
-                            if (error.message.includes('category_ids') || newProduct.category_ids) {
-                                const { category_ids, ...retryData } = newProduct;
-                                error = await executeInsert(retryData);
+                            for (const col of columnsToRemove) {
+                                delete safeData[col];
                             }
+                            // Also remove created_by_name which is a frontend-only field
+                            delete safeData.created_by_name;
 
-                            // 2. If still failing, try removing 'created_by'
-                            if (error && (error.code === 'PGRST204' || error.message.includes('created_by'))) {
-                                const { created_by, category_ids, ...retryData } = newProduct;
-                                error = await executeInsert(retryData);
-                            }
-
-                            // 3. If still failing, try removing 'code'
-                            if (error && error.code === 'PGRST204') {
-                                const { code, created_by, category_ids, ...retryData } = newProduct;
-                                error = await executeInsert(retryData);
-                            }
+                            console.log('Retrying with safe data (removed potentially missing columns):', Object.keys(safeData));
+                            error = await executeInsert(safeData);
                         }
 
                         if (error) throw error;

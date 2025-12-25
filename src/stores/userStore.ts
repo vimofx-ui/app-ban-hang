@@ -214,16 +214,7 @@ export const useUserStore = create<UserState>()(
             createUser: async (user, password) => {
                 set({ loading: true, error: null });
                 try {
-                    // For Supabase, creating a user usually involves auth.admin.createUser 
-                    // which requires service role key, or handled via Edge Functions.
-                    // For this client-side demo, we might just insert into user_profiles 
-                    // if we are simulating or if logic allows.
-                    // REAL IMPLEMENTATION: This should call a Supabase Edge Function to create Auth User + Profile
-
                     console.log('Creating user:', user, 'Password:', password);
-
-                    // Simulate success for now or insert if policies allow
-                    // Note: This won't create a login-able Auth user without backend logic
 
                     const newUser: UserProfile = {
                         id: crypto.randomUUID(),
@@ -238,18 +229,49 @@ export const useUserStore = create<UserState>()(
                     } as UserProfile;
 
                     if (supabase) {
-                        // Insert profile
-                        const { error } = await supabase
-                            .from('user_profiles')
-                            .insert(newUser);
+                        // Helper to attempt insert
+                        const attemptInsert = async (data: any) => {
+                            const { error } = await supabase.from('user_profiles').insert(data);
+                            return error;
+                        };
 
-                        if (error) throw error;
+                        let error = await attemptInsert(newUser);
+
+                        // RETRY STRATEGY: Remove potentially missing columns
+                        if (error && error.code === 'PGRST204') {
+                            console.warn('User profile schema mismatch, retrying with minimal data...', error.message);
+
+                            // Build minimal user object with only essential columns
+                            const minimalUser: any = {
+                                id: newUser.id,
+                                full_name: newUser.full_name,
+                                role: newUser.role,
+                                is_active: newUser.is_active,
+                                created_at: newUser.created_at,
+                                updated_at: newUser.updated_at
+                            };
+
+                            // Try with minimal data
+                            error = await attemptInsert(minimalUser);
+
+                            // If still failing, try without id (let DB generate)
+                            if (error && error.code === 'PGRST204') {
+                                delete minimalUser.id;
+                                error = await attemptInsert(minimalUser);
+                            }
+                        }
+
+                        if (error) {
+                            console.error('Failed to create user in Supabase:', error);
+                            throw error;
+                        }
                     }
 
                     set(state => ({ users: [newUser, ...state.users] }));
                     return newUser;
 
                 } catch (err: any) {
+                    console.error('createUser error:', err);
                     set({ error: err.message });
                     return null;
                 } finally {

@@ -559,8 +559,8 @@ function EmployeeModal({ isOpen, onClose, initialData, onSave }: EmployeeModalPr
             return;
         }
 
-        if (!isEdit && !formData.phone?.trim()) {
-            setError('Vui lòng nhập số điện thoại đăng nhập');
+        if (!isEdit && !formData.email?.trim()) {
+            setError('Vui lòng nhập email đăng nhập');
             return;
         }
 
@@ -703,13 +703,14 @@ function EmployeeModal({ isOpen, onClose, initialData, onSave }: EmployeeModalPr
 
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                             <div>
-                                <label style={labelStyle}>Số điện thoại (Đăng nhập) *</label>
+                                <label style={labelStyle}>Email (Đăng nhập) *</label>
                                 <input
-                                    type="text"
-                                    value={formData.phone}
-                                    onChange={e => setFormData({ ...formData, phone: e.target.value })}
+                                    type="email"
+                                    value={formData.email}
+                                    onChange={e => setFormData({ ...formData, email: e.target.value })}
                                     style={inputStyle}
                                     disabled={isEdit}
+                                    placeholder="example@email.com"
                                 />
                             </div>
                             <div>
@@ -724,12 +725,13 @@ function EmployeeModal({ isOpen, onClose, initialData, onSave }: EmployeeModalPr
                         </div>
 
                         <div>
-                            <label style={labelStyle}>Email (Tuỳ chọn)</label>
+                            <label style={labelStyle}>Số điện thoại (Tuỳ chọn)</label>
                             <input
-                                type="email"
-                                value={formData.email}
-                                onChange={e => setFormData({ ...formData, email: e.target.value })}
+                                type="text"
+                                value={formData.phone}
+                                onChange={e => setFormData({ ...formData, phone: e.target.value })}
                                 style={inputStyle}
+                                placeholder="0123 456 789"
                             />
                         </div>
 
