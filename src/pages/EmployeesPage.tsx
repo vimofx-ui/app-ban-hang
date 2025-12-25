@@ -39,6 +39,7 @@ export function EmployeesPage() {
     const [viewingHistoryUser, setViewingHistoryUser] = useState<UserProfile | null>(null);
     const [viewingDetailUser, setViewingDetailUser] = useState<UserProfile | null>(null);
     const [editingUser, setEditingUser] = useState<UserProfile | null>(null);
+    const [deleteConfirmUser, setDeleteConfirmUser] = useState<UserProfile | null>(null);
     const [searchQuery, setSearchQuery] = useState('');
     const [filterRole, setFilterRole] = useState<string>('all');
     const [selectedMonth, setSelectedMonth] = useState(() => {
@@ -245,11 +246,9 @@ export function EmployeesPage() {
                         setIsModalOpen(true);
                         setViewingDetailUser(null);
                     }}
-                    onDelete={async () => {
-                        if (window.confirm(`Xác nhận xóa nhân viên "${viewingDetailUser.full_name}"?`)) {
-                            await deleteUser(viewingDetailUser.id);
-                            setViewingDetailUser(null);
-                        }
+                    onDelete={() => {
+                        setDeleteConfirmUser(viewingDetailUser);
+                        setViewingDetailUser(null);
                     }}
                     onToggleActive={async () => {
                         if (!viewingDetailUser) return;
@@ -261,6 +260,56 @@ export function EmployeesPage() {
                         }
                     }}
                 />
+            )}
+
+            {/* Delete Confirmation Modal */}
+            {deleteConfirmUser && (
+                <div style={{
+                    position: 'fixed', inset: 0, zIndex: 10000,
+                    backgroundColor: 'rgba(0,0,0,0.6)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    padding: '20px'
+                }}>
+                    <div style={{
+                        backgroundColor: 'white', borderRadius: '16px',
+                        padding: '32px', maxWidth: '400px', width: '100%',
+                        textAlign: 'center', boxShadow: '0 25px 50px rgba(0,0,0,0.25)'
+                    }}>
+                        <div style={{ fontSize: '48px', marginBottom: '16px' }}>⚠️</div>
+                        <h3 style={{ fontSize: '20px', fontWeight: 'bold', color: '#111827', marginBottom: '8px' }}>
+                            Xác nhận xóa nhân viên?
+                        </h3>
+                        <p style={{ color: '#6b7280', marginBottom: '24px' }}>
+                            Bạn có chắc chắn muốn xóa nhân viên <strong>"{deleteConfirmUser.full_name}"</strong>?
+                            <br />Hành động này không thể hoàn tác.
+                        </p>
+                        <div style={{ display: 'flex', gap: '12px' }}>
+                            <button
+                                onClick={() => setDeleteConfirmUser(null)}
+                                style={{
+                                    flex: 1, padding: '12px', borderRadius: '8px',
+                                    border: '1px solid #d1d5db', backgroundColor: 'white',
+                                    fontWeight: 600, cursor: 'pointer'
+                                }}
+                            >
+                                Hủy
+                            </button>
+                            <button
+                                onClick={async () => {
+                                    await deleteUser(deleteConfirmUser.id);
+                                    setDeleteConfirmUser(null);
+                                }}
+                                style={{
+                                    flex: 1, padding: '12px', borderRadius: '8px',
+                                    border: 'none', backgroundColor: '#dc2626', color: 'white',
+                                    fontWeight: 600, cursor: 'pointer'
+                                }}
+                            >
+                                🗑️ Xóa
+                            </button>
+                        </div>
+                    </div>
+                </div>
             )}
         </div>
     );
