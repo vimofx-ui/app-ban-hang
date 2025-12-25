@@ -7,25 +7,31 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
 
-if (!supabaseUrl || !supabaseAnonKey) {
-    console.warn(
-        '⚠️ Supabase credentials not found. Running in demo mode with mock data.'
-    );
-}
+// Check if Supabase is configured
+export const isSupabaseConfigured = (): boolean => {
+    return !!(supabaseUrl && supabaseAnonKey);
+};
 
-// Create Supabase client (or null if not configured)
-// Using 'any' for database schema to simplify typing until full schema is generated
-export const supabase: SupabaseClient | null = supabaseUrl && supabaseAnonKey
-    ? createClient(supabaseUrl, supabaseAnonKey, {
+// Create Supabase client - ALWAYS non-null for TypeScript
+// If env vars are missing, we create a dummy client that will fail at runtime
+// but allows TypeScript to compile
+let supabaseInstance: SupabaseClient;
+
+if (supabaseUrl && supabaseAnonKey) {
+    supabaseInstance = createClient(supabaseUrl, supabaseAnonKey, {
         auth: {
             autoRefreshToken: true,
             persistSession: true,
             detectSessionInUrl: true,
         },
-    })
-    : null;
+    });
+} else {
+    console.warn('⚠️ Supabase credentials not found. Running in demo mode.');
+    // Create a placeholder client with dummy values (will fail at runtime if used)
+    supabaseInstance = createClient('https://placeholder.supabase.co', 'placeholder-key', {
+        auth: { autoRefreshToken: false, persistSession: false },
+    });
+}
 
-// Helper to check if Supabase is configured
-export const isSupabaseConfigured = (): boolean => {
-    return supabase !== null;
-};
+// Export as non-null SupabaseClient
+export const supabase: SupabaseClient = supabaseInstance;

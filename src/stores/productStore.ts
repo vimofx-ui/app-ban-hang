@@ -106,7 +106,7 @@ export const useProductStore = create<ProductState>()(
                 // Helper to perform insert with fallback
                 const executeInsert = async (dataToInsert: any) => {
                     const { created_by_name, ...cleanData } = dataToInsert;
-                    const { error } = await supabase!.from('products').insert(cleanData);
+                    const { error } = await supabase.from('products').insert(cleanData);
                     return error;
                 };
 
@@ -230,7 +230,7 @@ export const useProductStore = create<ProductState>()(
                     try {
                         // Helper for update
                         const executeUpdate = async (dataToUpdate: any) => {
-                            const { error } = await supabase!
+                            const { error } = await supabase
                                 .from('products')
                                 .update(dataToUpdate)
                                 .eq('id', id);
