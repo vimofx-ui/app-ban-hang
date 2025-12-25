@@ -102,13 +102,46 @@ export const useProductStore = create<ProductState>()(
                 if (!newProduct.image_url) delete newProduct.image_url;
                 if (!newProduct.sku) delete newProduct.sku;
                 if (!newProduct.barcode) delete newProduct.barcode;
-                const { created_by_name, ...productToInsert } = newProduct; // Exclude virtual fields
+
+                // Helper to perform insert with fallback
+                const executeInsert = async (dataToInsert: any) => {
+                    const { created_by_name, ...cleanData } = dataToInsert;
+                    const { error } = await supabase.from('products').insert(cleanData);
+                    return error;
+                };
 
                 if (isSupabaseConfigured() && supabase) {
                     try {
-                        const { error } = await supabase
-                            .from('products')
-                            .insert(productToInsert);
+                        let error = await executeInsert(newProduct);
+
+                        // RETRY STRATEGY FOR MISSING COLUMNS (PGRST204)
+                        if (error && error.code === 'PGRST204') {
+                            console.warn('Schema mismatch detected, retrying with degraded fields...', error.message);
+
+                            // 0. Try removing 'exclude_from_loyalty_points' (New Fix)
+                            if (error.message.includes('exclude_from_loyalty_points') || newProduct.exclude_from_loyalty_points !== undefined) {
+                                const { exclude_from_loyalty_points, ...retryData } = newProduct;
+                                error = await executeInsert(retryData);
+                            }
+
+                            // 1. Try removing 'category_ids'
+                            if (error.message.includes('category_ids') || newProduct.category_ids) {
+                                const { category_ids, ...retryData } = newProduct;
+                                error = await executeInsert(retryData);
+                            }
+
+                            // 2. If still failing, try removing 'created_by'
+                            if (error && (error.code === 'PGRST204' || error.message.includes('created_by'))) {
+                                const { created_by, category_ids, ...retryData } = newProduct;
+                                error = await executeInsert(retryData);
+                            }
+
+                            // 3. If still failing, try removing 'code'
+                            if (error && error.code === 'PGRST204') {
+                                const { code, created_by, category_ids, ...retryData } = newProduct;
+                                error = await executeInsert(retryData);
+                            }
+                        }
 
                         if (error) throw error;
 
@@ -116,7 +149,7 @@ export const useProductStore = create<ProductState>()(
                         if (units && units.length > 0) {
                             const unitsToInsert = units.map(u => ({
                                 ...u,
-                                id: generateId(),  // Generate ID if not present (usually not for new)
+                                id: generateId(),
                                 product_id: newProduct.id,
                                 created_at: new Date().toISOString(),
                                 updated_at: new Date().toISOString()
@@ -185,11 +218,30 @@ export const useProductStore = create<ProductState>()(
 
                 if (isSupabaseConfigured() && supabase) {
                     try {
+                        // Helper for update
+                        const executeUpdate = async (dataToUpdate: any) => {
+                            const { error } = await supabase
+                                .from('products')
+                                .update(dataToUpdate)
+                                .eq('id', id);
+                            return error;
+                        };
+
                         // 1. Update Product Main Data
-                        const { error } = await supabase
-                            .from('products')
-                            .update(updatedData)
-                            .eq('id', id);
+                        let error = await executeUpdate(updatedData);
+
+                        // RETRY STRATEGY FOR MISSING COLUMNS
+                        if (error && error.code === 'PGRST204') {
+                            console.warn('Update schema mismatch, retrying...', error.message);
+                            if (error.message.includes('category_ids') || updatedData.category_ids) {
+                                const { category_ids, ...retryData } = updatedData;
+                                error = await executeUpdate(retryData);
+                            }
+                            if (error && (error.code === 'PGRST204' || error.message.includes('created_by'))) {
+                                const { created_by, category_ids, ...retryData } = updatedData;
+                                error = await executeUpdate(retryData);
+                            }
+                        }
 
                         if (error) throw error;
 

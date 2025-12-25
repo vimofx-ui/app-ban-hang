@@ -6,7 +6,7 @@ import { Trash2, Clock, RotateCw, AlertCircle, Plus, Check } from 'lucide-react'
 
 export function RemindersPage() {
     return (
-        <div className="p-6 max-w-7xl mx-auto">
+        <div className="w-full p-6 max-w-7xl mx-auto">
             <h1 className="text-2xl font-bold text-gray-900 mb-6">Quản lý Lời nhắc</h1>
             <div className="bg-white rounded-xl shadow-sm border p-6">
                 <p className="text-gray-500 mb-6">
@@ -15,7 +15,7 @@ export function RemindersPage() {
                 </p>
 
                 {/* We reuse the manager component but force it open/embedded */}
-                <div className="relative" style={{ minHeight: '500px' }}>
+                <div className="relative w-full" style={{ minHeight: '500px' }}>
                     {/* 
                         Reuse the internal logic of ReminderManager? 
                         Actually ReminderManager is a Modal. Let's make a wrapper or just use it.
@@ -121,7 +121,7 @@ function ReminderPageContent() {
     };
 
     return (
-        <div>
+        <div className="w-full">
             {/* Toolbar */}
             <div className="flex justify-between items-center mb-6">
                 <div>
@@ -271,13 +271,13 @@ function ReminderPageContent() {
             </div>
 
             {reminders.length === 0 && !isAddMode && (
-                <div className="py-16 text-center">
-                    <div className="w-20 h-20 bg-gray-100 text-gray-400 rounded-full flex items-center justify-center text-4xl mx-auto mb-4">🔔</div>
+                <div className="flex flex-col items-center justify-center py-16 text-center w-full min-h-[400px]">
+                    <div className="w-20 h-20 bg-gray-100 text-gray-400 rounded-full flex items-center justify-center text-4xl mb-4">🔔</div>
                     <h3 className="text-lg font-medium text-gray-900 mb-2">Chưa có nhắc nhở nào</h3>
-                    <p className="text-gray-500 max-w-sm mx-auto mb-6">Tạo nhắc nhở để hệ thống tự động thông báo công việc cho nhân viên.</p>
+                    <p className="text-gray-500 max-w-md text-center mb-6 px-4">Tạo nhắc nhở để hệ thống tự động thông báo công việc cho nhân viên.</p>
                     <button
                         onClick={() => setIsAddMode(true)}
-                        className="bg-primary text-white px-6 py-2.5 rounded-xl font-medium shadow hover:bg-primary/90"
+                        className="bg-primary text-white px-6 py-2.5 rounded-xl font-medium shadow hover:bg-primary/90 whitespace-nowrap"
                     >
                         Tạo nhắc nhở ngay
                     </button>
@@ -287,7 +287,7 @@ function ReminderPageContent() {
             {deleteConfirmId && createPortal(
                 <div className="fixed inset-0 top-0 left-0 w-screen h-screen z-[10000] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={(e) => e.stopPropagation()}>
                     <div
-                        className="bg-white rounded-2xl shadow-2xl p-8 max-w-md w-full text-center border-2 border-red-100 min-w-[400px] relative"
+                        className="bg-white rounded-2xl shadow-2xl p-8 max-w-md w-full text-center border-2 border-red-100 min-w-[300px] mx-4 relative"
                         onClick={(e) => e.stopPropagation()}
                     >
                         <div className="w-20 h-20 bg-red-50 text-red-600 rounded-full flex items-center justify-center mx-auto mb-6 text-4xl shadow-sm">
