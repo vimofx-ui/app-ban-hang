@@ -3,7 +3,7 @@
 // =============================================================================
 
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
-import { OfflineOrder } from '@/hooks/useOfflineOrders';
+import type { OfflineOrder } from '@/hooks/useOfflineOrders';
 import { useBranchStore } from '@/stores/branchStore';
 import { useBrandStore } from '@/stores/brandStore';
 
@@ -19,7 +19,7 @@ export async function syncOrderToServer(order: OfflineOrder): Promise<boolean> {
 
     try {
         // Check if order already exists (idempotency check)
-        const { data: existing } = await supabase!
+        const { data: existing } = await supabase
             .from('orders')
             .select('id')
             .eq('local_id', order.local_id)
@@ -31,7 +31,7 @@ export async function syncOrderToServer(order: OfflineOrder): Promise<boolean> {
         }
 
         // Create order
-        const { data: createdOrder, error: orderError } = await supabase!
+        const { data: createdOrder, error: orderError } = await supabase
             .from('orders')
             .insert({
                 local_id: order.local_id,
@@ -67,7 +67,7 @@ export async function syncOrderToServer(order: OfflineOrder): Promise<boolean> {
                 total: item.quantity * item.price - (item.discount || 0),
             }));
 
-            const { error: itemsError } = await supabase!
+            const { error: itemsError } = await supabase
                 .from('order_items')
                 .insert(orderItems);
 
@@ -79,7 +79,7 @@ export async function syncOrderToServer(order: OfflineOrder): Promise<boolean> {
             // Update inventory (server-side)
             for (const item of order.items) {
                 try {
-                    await supabase!.rpc('decrement_inventory', {
+                    await supabase.rpc('decrement_inventory', {
                         p_branch_id: order.branch_id,
                         p_product_id: item.product_id,
                         p_quantity: item.quantity,
@@ -108,8 +108,12 @@ import { useOfflineOrders } from '@/hooks/useOfflineOrders';
 
 export function usePOSOrderCreator() {
     const { saveOfflineOrder, markSynced, isOnline } = useOfflineOrders();
-    const currentBranch = useBranchStore(state => state.currentBranch);
-    const currentBrand = useBrandStore(state => state.currentBrand);
+    // Note: In actual implementation, get brand/branch from auth context or props
+    // const currentBranch = useBranchStore(state => state.getCurrentBranch());
+    const branchStore = useBranchStore.getState();
+    const brandStore = useBrandStore.getState();
+    const currentBranch = branchStore.getCurrentBranch();
+    const currentBrand = brandStore.currentBrand;
 
     const createOrder = async (orderData: {
         customer_id?: string;

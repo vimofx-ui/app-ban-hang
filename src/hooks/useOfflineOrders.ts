@@ -2,7 +2,8 @@
 // OFFLINE ORDERS HOOK - IndexedDB for POS Offline Mode
 // =============================================================================
 
-import { openDB, IDBPDatabase } from 'idb';
+import { openDB } from 'idb';
+import type { IDBPDatabase } from 'idb';
 import { v4 as uuid } from 'uuid';
 
 const DB_NAME = 'storely-pos';
