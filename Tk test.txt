@@ -1,0 +1,7 @@
+Vai trò	Email	Mật khẩu
+Admin	
+admin@demo.com
+admin123
+Staff	
+staff@demo.com
+staff123

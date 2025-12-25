@@ -1,0 +1,605 @@
+Dưới đây là quy trình bán hàng giao đi (Delivery Order) đề xuất, được chuẩn hóa theo luồng nghiệp vụ POS – kho – giao hàng – doanh số, đảm bảo khoa học, đúng thứ tự, dễ triển khai kỹ thuật và phù hợp thực tế vận hành cửa hàng.
+
+1. Tổng quan mục tiêu chức năng
+
+Chức năng Bán hàng giao đi nhằm:
+
+Tạo đơn giao hàng tại quầy POS
+
+Chưa ghi nhận doanh số ngay khi tạo đơn
+
+Quản lý đơn theo trạng thái xử lý
+
+Chỉ ghi nhận doanh số khi đã xuất kho + thanh toán
+
+Phân quyền rõ vai trò: nhân viên bán hàng – đóng gói – giao hàng – xuất kho/thanh toán
+
+2. Phân loại đơn hàng
+
+Khi tạo đơn tại POS, đơn hàng có 2 loại:
+
+Loại đơn	Mô tả
+Bán tại quầy	Thanh toán ngay, ghi nhận doanh số ngay
+Bán giao đi	Giao sau, xử lý theo nhiều bước
+3. Luồng nghiệp vụ chi tiết (theo đúng thứ tự)
+BƯỚC 1: Tạo đơn bán giao đi tại POS
+
+Tại màn hình POS:
+
+Nhân viên bán hàng tích chọn checkbox:
+☑ Bán hàng giao đi
+
+Nhập thông tin:
+
+Khách hàng
+
+Địa chỉ giao hàng
+
+SĐT người nhận
+
+Ghi chú giao hàng (nếu có)
+
+Thêm sản phẩm vào đơn
+
+Hệ thống xử lý:
+
+Tạo Đơn hàng giao đi
+
+Trạng thái ban đầu:
+
+Chờ duyệt
+
+KHÔNG ghi nhận doanh số
+
+KHÔNG trừ tồn kho
+
+Ghi nhận người tạo đơn (nhân viên bán hàng)
+
+BƯỚC 2: In hóa đơn / phiếu tạm (tự động)
+
+Khi lưu đơn:
+
+Tự động in:
+
+Phiếu đơn hàng giao đi (phiếu nội bộ)
+
+Hoặc hóa đơn tạm (ghi rõ Chưa thanh toán – Đơn giao hàng)
+
+📌 Mục đích:
+
+Giao cho bộ phận đóng gói
+
+Kiểm soát đơn hàng vật lý
+
+BƯỚC 3: Quản lý đơn hàng chờ giao
+
+Đơn hàng được đưa vào menu:
+
+Đơn hàng chờ giao
+
+Danh sách hiển thị:
+
+Mã đơn
+
+Khách hàng
+
+Tổng tiền
+
+Trạng thái
+
+Thời gian tạo
+
+Người tạo đơn
+
+BƯỚC 4: Duyệt đơn hàng
+
+Vai trò: Quản lý / nhân viên có quyền duyệt
+
+Hành động:
+
+Kiểm tra:
+
+Giá
+
+Thông tin giao hàng
+
+Hàng hóa
+
+Bấm Duyệt đơn
+
+Hệ thống cập nhật:
+
+Trạng thái:
+
+Đã duyệt – Chờ đóng gói
+
+BƯỚC 5: Đóng gói
+
+Vai trò: Nhân viên kho / đóng gói
+
+Hành động:
+
+Xác nhận số lượng thực tế
+
+Đóng gói hàng hóa
+
+Hệ thống cập nhật:
+
+Trạng thái:
+
+Đã đóng gói
+
+BƯỚC 6: Chọn hình thức giao hàng
+
+Có 2 hình thức:
+
+6.1 Nhận tại cửa hàng
+
+Khách đến nhận
+
+Không cần vận đơn
+
+Trạng thái:
+
+Chờ xuất kho – Nhận tại cửa hàng
+
+6.2 Giao đi
+
+Nhập thông tin:
+
+Đơn vị vận chuyển
+
+Mã vận đơn
+
+Hệ thống:
+
+Cho phép in mã vận đơn
+
+Gắn mã vận đơn vào đơn hàng
+
+Trạng thái:
+
+Chờ xuất kho – Giao đi
+
+BƯỚC 7: Xuất kho & thanh toán
+
+Vai trò: Nhân viên xuất kho / thu ngân
+
+Hành động:
+
+Xác nhận xuất kho
+
+Xác nhận thanh toán:
+
+Tiền mặt
+
+Chuyển khoản
+
+COD (nếu có)
+
+Hệ thống xử lý:
+
+Trừ tồn kho
+
+Ghi nhận thanh toán
+
+GHI NHẬN DOANH SỐ
+
+📌 Doanh số được ghi cho:
+
+Nhân viên xuất kho / thanh toán
+(Không phải người tạo đơn ban đầu)
+
+BƯỚC 8: Hoàn tất đơn hàng
+
+Trạng thái cuối:
+
+Hoàn tất
+
+Hệ thống lưu:
+
+Người tạo đơn
+
+Người duyệt
+
+Người đóng gói
+
+Người xuất kho & thanh toán
+
+Thời gian từng bước
+
+4. Sơ đồ trạng thái đơn hàng (chuẩn hóa)
+Chờ duyệt
+   ↓
+Đã duyệt – Chờ đóng gói
+   ↓
+Đã đóng gói
+   ↓
+Chờ xuất kho (Nhận tại cửa hàng / Giao đi)
+   ↓
+Đã xuất kho & Thanh toán
+   ↓
+Hoàn tất
+
+5. Quy tắc ghi nhận doanh số (rất quan trọng)
+Thời điểm	Doanh số
+Tạo đơn	❌ Không ghi nhận
+Duyệt / đóng gói	❌
+Giao hàng	❌
+Xuất kho + thanh toán	✅ Ghi nhận
+6. Gợi ý kỹ thuật khi triển khai
+
+Bảng orders
+
+order_type: pos / delivery
+
+status
+
+created_by
+
+approved_by
+
+packed_by
+
+exported_by
+
+Bảng order_status_logs để audit
+
+Bảng sales_commission ghi nhận doanh số theo bước cuối
+
+Nếu bạn muốn, mình có thể:
+
+Vẽ sơ đồ BPMN / Flowchart
+
+Đề xuất API & database schema
+
+Gợi ý UI/UX cho POS & quản lý đơn giao
+
+Hoặc chuẩn hóa theo mô hình ERP / Odoo / KiotViet
+
+Bạn đang dùng webapp custom hay framework nào (Laravel, Node, React, Vue)?
+
+Gợi ý UI/UX cho POS & quản lý đơn giao, webapp custom
+
+Tuyệt 👍 Với webapp POS custom, mình sẽ gợi ý UI/UX thực tế – dễ dùng – tối ưu thao tác tại quầy, chia theo 2 khu vực chính:
+1️⃣ POS bán hàng
+2️⃣ Quản lý đơn giao hàng (Backoffice / Dashboard)
+
+1. UI/UX POS – Bán hàng giao đi tại quầy
+1.1 Tổng thể layout POS (Desktop / Tablet)
+
+👉 Nguyên tắc: 1 màn hình – thao tác nhanh – không che luồng bán tại quầy
+
+Bố cục đề xuất
+┌──────────────┬──────────────────────────┐
+│ Danh mục SP  │ Danh sách sản phẩm       │
+│              │ (search + scan barcode)  │
+├──────────────┼──────────────────────────┤
+│ Thông tin KH │ Giỏ hàng (Cart)          │
+│              │                           │
+├──────────────┴──────────────────────────┤
+│ Thanh toán – Hành động chính            │
+└─────────────────────────────────────────┘
+
+1.2 Toggle “Bán hàng giao đi”
+
+📍 Vị trí đề xuất: Ngay phía trên hoặc trong khung thanh toán
+
+UI đề xuất
+
+Switch / Checkbox rõ ràng:
+
+☐ Bán tại quầy     ☑ Bán hàng giao đi
+
+
+Hoặc dạng toggle:
+
+[ Bán tại quầy ] ——●—— [ Giao hàng ]
+
+
+📌 Khi bật Bán hàng giao đi:
+
+UI mở rộng thêm khối thông tin
+
+Không thay đổi thao tác chọn sản phẩm
+
+1.3 Form thông tin giao hàng (chỉ hiện khi bật)
+┌───────────────────────────────┐
+│ THÔNG TIN GIAO HÀNG           │
+├───────────────────────────────┤
+│ Khách hàng      [__________] │
+│ SĐT             [__________] │
+│ Địa chỉ giao    [__________] │
+│ Ghi chú         [__________] │
+└───────────────────────────────┘
+
+UX lưu ý
+
+Auto-fill nếu chọn khách cũ
+
+Validate SĐT, địa chỉ
+
+Không cho “Thanh toán ngay” ở bước này
+
+1.4 Nút hành động cuối POS
+Khi là bán giao đi
+
+Thay nút Thanh toán bằng:
+
+[ Lưu đơn giao hàng ]
+
+
+📌 Tooltip:
+
+Đơn sẽ chuyển sang trạng thái chờ duyệt – chưa ghi nhận doanh số
+
+1.5 In hóa đơn tự động
+
+Sau khi lưu:
+
+Popup:
+
+✔ Tạo đơn giao hàng thành công
+[ In phiếu giao hàng ]   [ Đóng ]
+
+
+Phiếu in ghi rõ:
+
+ĐƠN HÀNG GIAO ĐI
+
+Chưa thanh toán
+
+Mã đơn lớn, rõ
+
+2. UI/UX Quản lý đơn giao hàng (Dashboard)
+2.1 Menu điều hướng
+📦 Đơn giao hàng
+ ├─ Chờ duyệt
+ ├─ Chờ đóng gói
+ ├─ Chờ giao / xuất kho
+ ├─ Hoàn tất
+
+
+📌 Mỗi menu hiển thị badge số lượng
+
+2.2 Danh sách đơn hàng (List View)
+Bảng chuẩn POS
+Mã đơn	Khách	Tổng	Trạng thái	Loại giao	Hành động
+Màu trạng thái (UX rất quan trọng)
+
+🟡 Chờ duyệt
+
+🔵 Đang xử lý
+
+🟣 Chờ giao
+
+🟢 Hoàn tất
+
+🔴 Hủy
+
+2.3 Trang chi tiết đơn giao hàng
+
+Chia 3 cột / 3 khối rõ ràng
+
+Khối 1: Thông tin đơn
+
+Mã đơn
+
+Thời gian tạo
+
+Nhân viên tạo
+
+Trạng thái hiện tại
+
+Khối 2: Sản phẩm
+
+Danh sách SP
+
+SL đặt – SL thực tế
+
+Ghi chú thiếu/hư
+
+Khối 3: Xử lý theo trạng thái (Action Panel)
+
+👉 Chỉ hiện nút phù hợp với trạng thái
+
+Ví dụ:
+
+Trạng thái: Chờ duyệt
+
+[ Duyệt đơn ]   [ Hủy ]
+
+
+Trạng thái: Chờ đóng gói
+
+[ Xác nhận đóng gói ]
+
+
+Trạng thái: Chờ giao
+
+☐ Nhận tại cửa hàng
+☐ Giao đi
+
+Nếu giao đi:
+- Đơn vị VC: [GHN]
+- Mã vận đơn: [________]
+[ In mã vận đơn ]
+
+
+Trạng thái: Chờ xuất kho
+
+[ Xuất kho & Thanh toán ]
+
+2.4 Màn hình xuất kho & thanh toán
+UI gọn – giống POS
+┌───────────────┐
+│ Thông tin đơn │
+├───────────────┤
+│ Hình thức TT  │
+│ ☐ Tiền mặt    │
+│ ☐ Chuyển khoản│
+│ ☐ COD         │
+├───────────────┤
+│ [ Xác nhận ]  │
+└───────────────┘
+
+
+📌 Sau khi xác nhận:
+
+Trừ tồn kho
+
+Ghi nhận doanh số
+
+Log nhân viên xử lý
+
+3. UX nâng cao (rất nên có)
+3.1 Timeline trạng thái (Audit)
+
+Hiển thị dạng:
+
+• 10:05 - Tạo đơn (NV A)
+• 10:10 - Duyệt (QL B)
+• 10:30 - Đóng gói (NV C)
+• 11:00 - Xuất kho & TT (NV D)
+
+3.2 Quyền & phân vai
+Vai trò	Quyền
+Bán hàng	Tạo đơn
+Quản lý	Duyệt / hủy
+Kho	Đóng gói / xuất
+Thu ngân	Thanh toán
+3.3 Cảnh báo UX
+
+Badge “Chưa thanh toán”
+
+Highlight đơn quá thời gian xử lý
+
+Không cho bỏ qua bước
+
+
+. WIREFRAME CHI TIẾT (TEXT WIREFRAME)
+1. POS DESKTOP – TẠO ĐƠN BÁN GIAO ĐI
+┌──────────────────────────────────────────────────────────────┐
+│ LOGO | POS | NV: Nguyen A | 10:32 AM                         │
+├──────────────┬──────────────────────────────┬───────────────┤
+│ DANH MỤC     │ DANH SÁCH SẢN PHẨM            │ GIỎ HÀNG      │
+│ ▢ Thực phẩm  │ 🔍 Tìm / Scan barcode        │ SP A   x2     │
+│ ▢ Đồ uống    │ ───────────────────────────  │ SP B   x1     │
+│ ▢ Khác       │ [ SP CARD ][ SP CARD ]       │ ───────────   │
+│              │ [ SP CARD ][ SP CARD ]       │ Tạm tính      │
+├──────────────┴──────────────────────────────┼───────────────┤
+│ KHÁCH HÀNG / GIAO HÀNG                       │ THANH TOÁN   │
+│ ☑ BÁN HÀNG GIAO ĐI                           │ Tổng: 350k   │
+│ Tên KH: [__________]                         │              │
+│ SĐT:    [__________]                         │ [LƯU ĐƠN     │
+│ Địa chỉ:[__________]                         │  GIAO HÀNG]  │
+│ Ghi chú:[__________]                         │              │
+└──────────────────────────────────────────────────────────────┘
+2. DASHBOARD – DANH SÁCH ĐƠN GIAO HÀNG
+┌──────────────────────────────────────────┐
+│ 📦 ĐƠN GIAO HÀNG  | 🔍 Tìm đơn            │
+├──────────────────────────────────────────┤
+│ [🟡] DH001 | Chờ duyệt   | 350k | NV A   │
+│ [🔵] DH002 | Chờ đóng gói| 520k | NV B   │
+│ [🟣] DH003 | Chờ giao    | 180k | NV C   │
+│ [🟢] DH004 | Hoàn tất    | 420k | NV D   │
+└──────────────────────────────────────────┘
+3. CHI TIẾT ĐƠN – TABLET (ĐÓNG GÓI)
+┌──────────────────────────────┐
+│ ĐƠN: DH002  [🔵 Chờ đóng gói]│
+├──────────────────────────────┤
+│ Khách: Trần B – 0909xxxxxx   │
+│ Địa chỉ: 12 Nguyễn Huệ       │
+├──────────────────────────────┤
+│ SẢN PHẨM                     │
+│ ☑ SP A  x2                   │
+│ ☑ SP B  x1                   │
+├──────────────────────────────┤
+│ [ XÁC NHẬN ĐÓNG GÓI ]         │
+└──────────────────────────────┘
+4. CHI TIẾT ĐƠN – MOBILE (GIAO HÀNG)
+┌────────────────────────┐
+│ DH003 | GIAO ĐI        │
+├────────────────────────┤
+│ 👤 Trần B              │
+│ 📞 0909xxxxxx [GỌI]   │
+│ 📍 12 Nguyễn Huệ       │
+├────────────────────────┤
+│ 🚚 GHN                 │
+│ 📦 Mã: GHN123456       │
+│ [SCAN] [COPY]          │
+├────────────────────────┤
+│ [ ĐÃ GIAO ]            │
+│ [ KHÔNG GIAO ĐƯỢC ]    │
+└────────────────────────┘
+II. UI STATE MACHINE (CỐT LÕI HỆ THỐNG)
+1. Danh sách State chính
+DRAFT
+CHỜ_DUYỆT
+ĐÃ_DUYỆT
+ĐANG_ĐÓNG_GÓI
+ĐÃ_ĐÓNG_GÓI
+CHỜ_GIAO
+CHỜ_XUẤT_KHO
+ĐÃ_XUẤT_KHO_THANH_TOÁN
+HOÀN_TẤT
+HỦY
+2. State Transition Diagram (Logic)
+DRAFT
+  ↓ Lưu đơn giao
+CHỜ_DUYỆT
+  ↓ Duyệt
+ĐÃ_DUYỆT
+  ↓ Bắt đầu đóng gói
+ĐANG_ĐÓNG_GÓI
+  ↓ Xác nhận
+ĐÃ_ĐÓNG_GÓI
+  ↓ Chọn giao
+CHỜ_GIAO
+  ↓ Giao xong / KH nhận
+CHỜ_XUẤT_KHO
+  ↓ Xuất kho + Thanh toán
+HOÀN_TẤT
+3. Mapping STATE → UI ACTION
+STATE	BUTTON HIỂN THỊ
+CHỜ_DUYỆT	Duyệt / Hủy
+ĐÃ_DUYỆT	Bắt đầu đóng gói
+ĐANG_ĐÓNG_GÓI	Xác nhận đóng gói
+ĐÃ_ĐÓNG_GÓI	Chọn hình thức giao
+CHỜ_GIAO	Xác nhận đã giao
+CHỜ_XUẤT_KHO	Xuất kho & Thanh toán
+4. Rule quan trọng
+
+Không thể nhảy state
+
+Button render theo state
+
+Doanh số chỉ ghi tại ĐÃ_XUẤT_KHO_THANH_TOÁN
+
+Mỗi transition phải log user + time
+
+III. GỢI Ý TRIỂN KHAI KỸ THUẬT
+
+Frontend: State Machine (XState / custom)
+
+Backend: Validate transition
+
+UI: render động theo order.status
+
+👉 Nếu bạn muốn, bước tiếp theo mình có thể:
+
+Vẽ state machine diagram chuẩn BPMN
+
+Viết pseudo-code State Machine
+
+Mapping API endpoint theo từng state
+
+Tách UI theo role (NV bán, kho, giao)
+
+Mình đã vẽ wireframe chi tiết cho từng màn hình (POS Desktop, Dashboard, Tablet đóng gói, Mobile giao hàng) và thiết kế UI State Machine hoàn chỉnh trong canvas bên cạnh để bạn tiện:
+
+Review nghiệp vụ
+
+Giao cho dev FE/BE
+
+Làm tài liệu chuẩn hóa sản phẩm
