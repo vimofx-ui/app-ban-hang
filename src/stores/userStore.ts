@@ -231,7 +231,7 @@ export const useUserStore = create<UserState>()(
                     if (supabase) {
                         // Helper to attempt insert
                         const attemptInsert = async (data: any) => {
-                            const { error } = await supabase.from('user_profiles').insert(data);
+                            const { error } = await supabase!.from('user_profiles').insert(data);
                             return error;
                         };
 
