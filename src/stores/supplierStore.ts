@@ -7,6 +7,7 @@ import { persist } from 'zustand/middleware';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import type { Supplier } from '@/types';
 import { generateId } from '@/lib/utils';
+import { useBrandStore } from '@/stores/brandStore';
 
 // Mock suppliers for demo
 const MOCK_SUPPLIERS: Supplier[] = [
@@ -99,9 +100,11 @@ export const useSupplierStore = create<SupplierState>()(
             },
 
             addSupplier: async (supplierData) => {
+                const currentBrand = useBrandStore.getState().currentBrand;
                 const newSupplier: Supplier = {
                     ...supplierData,
                     id: generateId(),
+                    brand_id: currentBrand?.id,
                     created_at: new Date().toISOString(),
                 };
 

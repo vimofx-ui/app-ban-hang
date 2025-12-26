@@ -384,6 +384,7 @@ export interface Supplier extends BaseEntity {
     notes?: string;
     is_active: boolean;
     debt_balance: number;          // Công nợ với nhà cung cấp
+    brand_id?: string;
 }
 
 // ============= Debt Payment Types =============
@@ -410,6 +411,8 @@ export type PurchaseOrderStatus = 'draft' | 'confirmed' | 'received' | 'cancelle
 export interface PurchaseOrder extends BaseEntity {
     po_number: string;
     supplier_id?: UUID;
+    brand_id?: UUID;
+    branch_id?: UUID;
     status: PurchaseOrderStatus;
     subtotal: number;
     discount_amount: number;

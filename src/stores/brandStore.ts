@@ -12,7 +12,10 @@ export interface Brand {
     owner_id: string;
     plan: 'free' | 'basic' | 'pro';
     status: number;
+    slug?: string;
     logo_url?: string;
+    primary_color?: string;
+    secondary_color?: string;
     created_at: string;
     updated_at: string;
 }

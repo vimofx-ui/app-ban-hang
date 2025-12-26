@@ -9,8 +9,17 @@ import { useProductStore } from '@/stores/productStore';
 import { useSupplierStore } from '@/stores/supplierStore';
 import { useDebtStore } from '@/stores/debtStore';
 import { useAuthStore } from '@/stores/authStore';
+import { useBranchStore } from '@/stores/branchStore';
+import { useBrandStore } from '@/stores/brandStore';
 import type { PurchaseOrder, PurchaseOrderItem } from '@/types';
 import { generateId, generateOrderNumber } from '@/lib/utils';
+import {
+    updateSupplierProductMapping,
+    getProductsNeedingReorder,
+    groupProductsBySupplier,
+    type ProductForecast,
+    type SmartPOInput
+} from '@/utils/forecast';
 
 // Activity Log Entry for history timeline
 export interface ActivityLogEntry {
@@ -72,6 +81,12 @@ export interface PurchaseOrderState {
     addNote: (orderId: string, note: string) => Promise<void>;
     getOrderById: (id: string) => PurchaseOrderWithItems | undefined;
     setSelectedOrder: (id: string | null) => void;
+
+    // Smart PO functions
+    loadSmartPOSuggestions: () => Promise<ProductForecast[]>;
+    createSmartPOs: () => Promise<PurchaseOrderWithItems[]>;
+    smartPOSuggestions: ProductForecast[];
+    isLoadingSmartPO: boolean;
 }
 
 export const usePurchaseOrderStore = create<PurchaseOrderState>()(
@@ -80,6 +95,8 @@ export const usePurchaseOrderStore = create<PurchaseOrderState>()(
             orders: [],
             isLoading: false,
             selectedOrderId: null,
+            smartPOSuggestions: [],
+            isLoadingSmartPO: false,
 
             loadOrders: async () => {
                 set({ isLoading: true });
@@ -178,6 +195,9 @@ export const usePurchaseOrderStore = create<PurchaseOrderState>()(
                     }]
                 };
 
+                const currentBranch = useBranchStore.getState().currentBranch;
+                const currentBrand = useBrandStore.getState().currentBrand;
+
                 if (isSupabaseConfigured() && supabase) {
                     try {
                         await supabase.from('purchase_orders').insert({
@@ -191,7 +211,9 @@ export const usePurchaseOrderStore = create<PurchaseOrderState>()(
                             notes: input.notes || '',
                             expected_date: input.expected_date || null,
                             created_by: currentUser?.id,
-                            assigned_to: assignedToName
+                            assigned_to: assignedToName,
+                            brand_id: currentBrand?.id,
+                            branch_id: currentBranch?.id
                         });
 
                         await supabase.from('purchase_order_items').insert(
@@ -379,6 +401,16 @@ export const usePurchaseOrderStore = create<PurchaseOrderState>()(
                             .update({ received_quantity: item.quantity })
                             .eq('id', item.id);
                     }
+
+                    // Update supplier-product mappings
+                    if (order.supplier_id) {
+                        const mappingItems = order.items.map(item => ({
+                            product_id: item.product_id,
+                            unit_price: item.unit_price,
+                            received_quantity: item.quantity
+                        }));
+                        await updateSupplierProductMapping(order.supplier_id, mappingItems);
+                    }
                 }
 
                 set((state) => ({
@@ -553,6 +585,60 @@ export const usePurchaseOrderStore = create<PurchaseOrderState>()(
             getOrderById: (id) => get().orders.find((o) => o.id === id),
 
             setSelectedOrder: (id) => set({ selectedOrderId: id }),
+
+            // =============================================================================
+            // SMART PO FUNCTIONS
+            // =============================================================================
+
+            loadSmartPOSuggestions: async () => {
+                set({ isLoadingSmartPO: true });
+                try {
+                    const suggestions = await getProductsNeedingReorder();
+                    set({ smartPOSuggestions: suggestions, isLoadingSmartPO: false });
+                    return suggestions;
+                } catch (err) {
+                    console.error('Failed to load smart PO suggestions:', err);
+                    set({ isLoadingSmartPO: false });
+                    return [];
+                }
+            },
+
+            createSmartPOs: async () => {
+                const suggestions = get().smartPOSuggestions;
+                if (suggestions.length === 0) {
+                    // Load suggestions if not already loaded
+                    const loaded = await get().loadSmartPOSuggestions();
+                    if (loaded.length === 0) return [];
+                }
+
+                const currentSuggestions = get().smartPOSuggestions;
+                const groupedBySupplier = groupProductsBySupplier(currentSuggestions);
+                const createdOrders: PurchaseOrderWithItems[] = [];
+
+                for (const group of groupedBySupplier) {
+                    try {
+                        const order = await get().createOrder({
+                            supplier_id: group.supplier_id,
+                            items: group.products.map(p => ({
+                                product_id: p.product_id,
+                                product_name: p.product_name,
+                                quantity: p.quantity,
+                                unit_price: p.unit_price
+                            })),
+                            notes: 'Đơn hàng tự động từ hệ thống Smart PO - Sản phẩm hết/sắp hết hàng',
+                            is_draft: true // Create as draft for review
+                        });
+                        createdOrders.push(order);
+                    } catch (err) {
+                        console.error('Failed to create smart PO for supplier:', group.supplier_id, err);
+                    }
+                }
+
+                // Clear suggestions after creating POs
+                set({ smartPOSuggestions: [] });
+
+                return createdOrders;
+            },
         }),
         {
             name: 'purchase-order-store',

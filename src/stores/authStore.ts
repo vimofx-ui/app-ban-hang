@@ -10,7 +10,7 @@ export interface AuthUser {
     id: string;
     email: string;
     name: string;
-    role: 'admin' | 'staff';
+    role: 'admin' | 'staff' | 'owner' | 'manager';
     created_at: string;
     is_active?: boolean;
 }

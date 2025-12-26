@@ -4,6 +4,7 @@
 
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { supabase } from '@/lib/supabase';
 
 // ============================================================================
 // INTERFACES
@@ -11,106 +12,32 @@ import { persist } from 'zustand/middleware';
 
 export interface Branch {
     id: string;
+    brand_id: string;
     name: string;
-    code: string;              // VD: "CN01", "HN02"
-    address: string;
-    phone: string;
+    code?: string;              // VD: "CN01", "HN02"
+    address?: string;
+    phone?: string;
     email?: string;
-    manager?: string;          // User ID of branch manager
-    isActive: boolean;
-    isHeadquarters: boolean;   // Flag for main branch
-    timezone?: string;
-    openTime?: string;         // "08:00"
-    closeTime?: string;        // "22:00"
-    latitude?: number;
-    longitude?: number;
-    createdAt: string;
-    updatedAt: string;
+    status: 'active' | 'inactive';
+    is_headquarters?: boolean;   // Flag for main branch
+    created_at: string;
+    updated_at: string;
 }
 
-export interface StockTransfer {
-    id: string;
-    fromBranchId: string;
-    toBranchId: string;
-    status: 'pending' | 'in_transit' | 'completed' | 'cancelled';
-    items: StockTransferItem[];
-    notes?: string;
-    createdBy: string;
-    createdAt: string;
-    completedAt?: string;
-}
-
-export interface StockTransferItem {
-    productId: string;
-    productName: string;
-    quantity: number;
-    receivedQuantity?: number;
-}
-
-export interface BranchSettings {
-    branchId: string;
-    // Override settings per branch
-    receiptHeader?: string;
-    receiptFooter?: string;
-    allowNegativeStock?: boolean;
-    defaultPaymentMethods?: string[];
-}
-
-// ============================================================================
-// STATE
-// ============================================================================
-
-interface BranchState {
+export interface BranchState {
     branches: Branch[];
-    currentBranchId: string | null;
-    stockTransfers: StockTransfer[];
-    branchSettings: BranchSettings[];
-    loading: boolean;
+    currentBranch: Branch | null;
+    isLoading: boolean;
+    error: string | null;
 
-    // Branch CRUD
-    addBranch: (branch: Omit<Branch, 'id' | 'createdAt' | 'updatedAt'>) => Branch;
-    updateBranch: (id: string, updates: Partial<Branch>) => void;
-    deleteBranch: (id: string) => void;
-
-    // Branch Selection
-    setCurrentBranch: (branchId: string) => void;
-    getCurrentBranch: () => Branch | null;
-
-    // Stock Transfer
-    createStockTransfer: (transfer: Omit<StockTransfer, 'id' | 'createdAt' | 'status'>) => StockTransfer;
-    updateStockTransfer: (id: string, updates: Partial<StockTransfer>) => void;
-    completeStockTransfer: (id: string, receivedItems: { productId: string; receivedQuantity: number }[]) => void;
-    cancelStockTransfer: (id: string) => void;
-
-    // Branch Settings
-    getBranchSettings: (branchId: string) => BranchSettings | undefined;
-    updateBranchSettings: (branchId: string, settings: Partial<BranchSettings>) => void;
-
-    // Helpers
-    getBranchById: (id: string) => Branch | undefined;
-    getActiveBranches: () => Branch[];
+    // Actions
+    fetchBranches: (brandId: string) => Promise<void>;
+    setCurrentBranch: (branch: Branch) => void;
+    createBranch: (branch: Partial<Branch>) => Promise<Branch | null>;
+    updateBranch: (id: string, updates: Partial<Branch>) => Promise<boolean>;
+    deleteBranch: (id: string) => Promise<boolean>;
+    getCurrentBranch: () => Branch | null; // Helper for non-hook usage
 }
-
-// ============================================================================
-// DEFAULT DATA
-// ============================================================================
-
-const DEFAULT_BRANCHES: Branch[] = [
-    {
-        id: 'branch-hq',
-        name: 'Chi nhánh Chính',
-        code: 'HQ01',
-        address: '123 Đường ABC, Quận 1, TP.HCM',
-        phone: '0901234567',
-        email: 'main@store.vn',
-        isActive: true,
-        isHeadquarters: true,
-        openTime: '08:00',
-        closeTime: '22:00',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-    }
-];
 
 // ============================================================================
 // STORE
@@ -119,136 +46,146 @@ const DEFAULT_BRANCHES: Branch[] = [
 export const useBranchStore = create<BranchState>()(
     persist(
         (set, get) => ({
-            branches: DEFAULT_BRANCHES,
-            currentBranchId: 'branch-hq',
-            stockTransfers: [],
-            branchSettings: [],
-            loading: false,
+            branches: [],
+            currentBranch: null,
+            isLoading: false,
+            error: null,
 
-            // ============== BRANCH CRUD ==============
-            addBranch: (branchData) => {
-                const newBranch: Branch = {
-                    ...branchData,
-                    id: `branch-${Date.now()}`,
-                    createdAt: new Date().toISOString(),
-                    updatedAt: new Date().toISOString(),
-                };
-                set((state) => ({
-                    branches: [...state.branches, newBranch]
-                }));
-                return newBranch;
-            },
+            fetchBranches: async (brandId: string) => {
+                if (!brandId) return;
 
-            updateBranch: (id, updates) => {
-                set((state) => ({
-                    branches: state.branches.map((b) =>
-                        b.id === id ? { ...b, ...updates, updatedAt: new Date().toISOString() } : b
-                    )
-                }));
-            },
+                set({ isLoading: true, error: null });
+                try {
+                    const { data, error } = await supabase
+                        .from('branches')
+                        .select('*')
+                        .eq('brand_id', brandId)
+                        .order('created_at', { ascending: true });
 
-            deleteBranch: (id) => {
-                // Soft delete by setting isActive to false
-                set((state) => ({
-                    branches: state.branches.map((b) =>
-                        b.id === id ? { ...b, isActive: false, updatedAt: new Date().toISOString() } : b
-                    )
-                }));
-            },
+                    if (error) throw error;
 
-            // ============== BRANCH SELECTION ==============
-            setCurrentBranch: (branchId) => {
-                set({ currentBranchId: branchId });
-            },
+                    // Convert DB status (0/1) to frontend status ('active'/'inactive')
+                    const branches = (data || []).map((b: any) => ({
+                        ...b,
+                        status: b.status === 1 ? 'active' : 'inactive'
+                    })) as Branch[];
 
-            getCurrentBranch: () => {
-                const { branches, currentBranchId } = get();
-                return branches.find((b) => b.id === currentBranchId) || null;
-            },
+                    set({ branches, isLoading: false });
 
-            // ============== STOCK TRANSFER ==============
-            createStockTransfer: (transferData) => {
-                const newTransfer: StockTransfer = {
-                    ...transferData,
-                    id: `transfer-${Date.now()}`,
-                    status: 'pending',
-                    createdAt: new Date().toISOString(),
-                };
-                set((state) => ({
-                    stockTransfers: [...state.stockTransfers, newTransfer]
-                }));
-                return newTransfer;
-            },
-
-            updateStockTransfer: (id, updates) => {
-                set((state) => ({
-                    stockTransfers: state.stockTransfers.map((t) =>
-                        t.id === id ? { ...t, ...updates } : t
-                    )
-                }));
-            },
-
-            completeStockTransfer: (id, receivedItems) => {
-                set((state) => ({
-                    stockTransfers: state.stockTransfers.map((t) => {
-                        if (t.id === id) {
-                            const updatedItems = t.items.map((item) => {
-                                const received = receivedItems.find((r) => r.productId === item.productId);
-                                return received ? { ...item, receivedQuantity: received.receivedQuantity } : item;
-                            });
-                            return {
-                                ...t,
-                                items: updatedItems,
-                                status: 'completed' as const,
-                                completedAt: new Date().toISOString(),
-                            };
+                    // Auto-select first branch if none selected or current is invalid
+                    const current = get().currentBranch;
+                    if (branches.length > 0) {
+                        const isValid = current && branches.find(b => b.id === current.id);
+                        if (!current || !isValid) {
+                            set({ currentBranch: branches[0] });
                         }
-                        return t;
-                    })
-                }));
-            },
-
-            cancelStockTransfer: (id) => {
-                set((state) => ({
-                    stockTransfers: state.stockTransfers.map((t) =>
-                        t.id === id ? { ...t, status: 'cancelled' as const } : t
-                    )
-                }));
-            },
-
-            // ============== BRANCH SETTINGS ==============
-            getBranchSettings: (branchId) => {
-                return get().branchSettings.find((s) => s.branchId === branchId);
-            },
-
-            updateBranchSettings: (branchId, settings) => {
-                set((state) => {
-                    const existing = state.branchSettings.find((s) => s.branchId === branchId);
-                    if (existing) {
-                        return {
-                            branchSettings: state.branchSettings.map((s) =>
-                                s.branchId === branchId ? { ...s, ...settings } : s
-                            )
-                        };
                     } else {
-                        return {
-                            branchSettings: [...state.branchSettings, { branchId, ...settings }]
-                        };
+                        set({ currentBranch: null });
                     }
-                });
+
+                } catch (err: any) {
+                    console.error('Error fetching branches:', err);
+                    set({ error: err.message, isLoading: false });
+                }
             },
 
-            // ============== HELPERS ==============
-            getBranchById: (id) => {
-                return get().branches.find((b) => b.id === id);
+            setCurrentBranch: (branch: Branch) => {
+                set({ currentBranch: branch });
             },
 
-            getActiveBranches: () => {
-                return get().branches.filter((b) => b.isActive);
+            createBranch: async (branchData) => {
+                set({ isLoading: true, error: null });
+                try {
+                    // Convert frontend status to DB status
+                    const dbPayload = {
+                        ...branchData,
+                        status: branchData.status === 'active' ? 1 : 0
+                    };
+
+                    const { data, error } = await supabase
+                        .from('branches')
+                        .insert(dbPayload)
+                        .select()
+                        .single();
+
+                    if (error) throw error;
+
+                    // Convert back for local store
+                    const newBranch = {
+                        ...data,
+                        status: data.status === 1 ? 'active' : 'inactive'
+                    } as Branch;
+
+                    set(state => ({
+                        branches: [...state.branches, newBranch],
+                        isLoading: false
+                    }));
+                    return newBranch;
+                } catch (err: any) {
+                    console.error('Error creating branch:', err);
+                    set({ error: err.message, isLoading: false });
+                    return null;
+                }
             },
+
+            updateBranch: async (id, updates) => {
+                set({ isLoading: true, error: null });
+                try {
+                    // Convert frontend status if present
+                    const dbUpdates: any = { ...updates };
+                    if (updates.status) {
+                        dbUpdates.status = updates.status === 'active' ? 1 : 0;
+                    }
+
+                    const { error } = await supabase
+                        .from('branches')
+                        .update(dbUpdates)
+                        .eq('id', id);
+
+                    if (error) throw error;
+
+                    // Fetch again to ensure sync or optimistically update
+                    set(state => ({
+                        branches: state.branches.map(b => b.id === id ? { ...b, ...updates } : b),
+                        currentBranch: state.currentBranch?.id === id ? { ...state.currentBranch, ...updates } : state.currentBranch,
+                        isLoading: false
+                    }));
+                    return true;
+                } catch (err: any) {
+                    console.error('Error updating branch:', err);
+                    set({ error: err.message, isLoading: false });
+                    return false;
+                }
+            },
+
+            deleteBranch: async (id) => {
+                set({ isLoading: true, error: null });
+                try {
+                    const { error } = await supabase
+                        .from('branches')
+                        .delete()
+                        .eq('id', id);
+
+                    if (error) throw error;
+
+                    set(state => ({
+                        branches: state.branches.filter(b => b.id !== id),
+                        currentBranch: state.currentBranch?.id === id ? null : state.currentBranch,
+                        isLoading: false
+                    }));
+                    return true;
+                } catch (err: any) {
+                    console.error('Error deleting branch:', err);
+                    set({ error: err.message, isLoading: false });
+                    return false;
+                }
+            },
+
+            getCurrentBranch: () => get().currentBranch,
         }),
         {
-            name: 'branch-store',
+            name: 'branch-storage',
+            partialize: (state) => ({ currentBranch: state.currentBranch }), // Only persist current branch selection
         }
     )
 );

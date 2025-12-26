@@ -56,9 +56,15 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
 }
 
 function RequireAdmin({ children }: { children: React.ReactNode }) {
-    const { user } = useAuthStore();
+    const { user, loading } = useAuthStore();
 
-    if (!user || user.role !== 'admin') {
+    if (loading) {
+        return <div className="flex items-center justify-center min-h-screen">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-600"></div>
+        </div>;
+    }
+
+    if (!user || (user.role !== 'admin' && user.role !== 'owner')) {
         return <Navigate to="/" replace />;
     }
 

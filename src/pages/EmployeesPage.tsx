@@ -54,19 +54,19 @@ export function EmployeesPage() {
 
     // Check access - use authStore.user instead of shiftStore.currentUser
     const canManageEmployees = useMemo(() => {
-        return authUser?.role === 'admin';
+        return authUser?.role === 'admin' || authUser?.role === 'owner';
     }, [authUser]);
 
     const filteredUsers = useMemo(() => {
         // If admin, show all (filtered). If staff, show ONLY self.
         let baseList = users;
-        if (authUser?.role !== 'admin') {
+        if (authUser?.role !== 'admin' && authUser?.role !== 'owner') {
             baseList = users.filter(u => u.id === authUser?.id);
         }
 
         return baseList.filter(user => {
             const matchesSearch = user.full_name.toLowerCase().includes(searchQuery.toLowerCase());
-            const matchesRole = filterRole === 'all' || (filterRole === 'admin' ? user.role === 'admin' : user.role === 'staff'); // Simplified filter for now
+            const matchesRole = filterRole === 'all' || (filterRole === 'admin' ? (user.role === 'admin' || user.role === 'owner') : user.role === 'staff'); // Simplified filter for now
             // const isActive = user.is_active; // Don't filter by active status, show all so we can re-activate them
             return matchesSearch && matchesRole; // && isActive;
         });
@@ -332,7 +332,7 @@ function EmployeeCard({ user, onEdit, onViewHistory, onViewDetail }: {
             const r = roles.find(rl => rl.id === user.role_id);
             if (r) return r.name;
         }
-        return user.role === 'admin' ? 'Quản lý' : 'Nhân viên';
+        return (user.role === 'admin' || user.role === 'owner') ? 'Quản lý' : 'Nhân viên';
     })();
 
     const roleColor = user.role === 'admin' ? "bg-purple-100 text-purple-700" : "bg-blue-100 text-blue-700";

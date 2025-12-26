@@ -110,8 +110,8 @@ export function MainLayout() {
         // Global inactive check logic (simplified from previous)
         if (fullUser && fullUser.is_active === false && item.path !== '/employees' && !item.children) return false;
 
-        // Admin bypass
-        if (fullUser?.role === 'admin') return true;
+        // Admin/Owner bypass
+        if (fullUser?.role === 'admin' || fullUser?.role === 'owner') return true;
 
         // Specific checks
         if (item.path === '/employees') return false; // Hide from staff usually
@@ -587,7 +587,7 @@ function UserSection({ collapsed, currentUser }: { collapsed: boolean; currentUs
     const { user: authUser, logout } = useAuthStore();
 
     const displayName = authUser?.name || currentUser?.name || 'Nhân viên';
-    const displayRole = authUser?.role === 'admin' ? 'Quản trị viên' : 'Nhân viên';
+    const displayRole = (authUser?.role === 'admin' || authUser?.role === 'owner') ? 'Quản trị viên' : 'Nhân viên';
     const initials = displayName.charAt(0).toUpperCase();
 
     return (

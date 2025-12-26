@@ -2,25 +2,66 @@
 // BRANCHES PAGE - Multi-Branch Management
 // =============================================================================
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useBranchStore, type Branch } from '@/stores/branchStore';
+import { useBrandStore } from '@/stores/brandStore';
 import { useAuthStore } from '@/stores/authStore';
-import { formatVND } from '@/lib/cashReconciliation';
+import { useStockTransferStore, type StockTransfer } from '@/stores/stockTransferStore';
+import { useProductStore } from '@/stores/productStore';
+import type { Product } from '@/types';
 
 export function BranchesPage() {
     const {
-        branches, currentBranchId, stockTransfers,
-        addBranch, updateBranch, deleteBranch, setCurrentBranch,
-        createStockTransfer, completeStockTransfer, cancelStockTransfer
+        branches, currentBranch, isLoading, error,
+        createBranch, updateBranch, deleteBranch, setCurrentBranch, fetchBranches,
     } = useBranchStore();
+
+    const { currentBrand, fetchCurrentBrand } = useBrandStore();
+    const brandId = currentBrand?.id;
+
+    // Stock transfers store
+    const {
+        transfers: stockTransfers,
+        isLoading: transfersLoading,
+        fetchTransfers,
+        createTransfer,
+        shipTransfer,
+        completeTransfer,
+        cancelTransfer
+    } = useStockTransferStore();
+
+    // Products for transfer picker
+    const { products, loadProducts } = useProductStore();
+
+    // Fetch branches on mount
+    useEffect(() => {
+        if (!currentBrand) {
+            fetchCurrentBrand();
+        }
+    }, []);
+
+    useEffect(() => {
+        if (brandId) {
+            fetchBranches(brandId);
+            fetchTransfers(brandId);
+            loadProducts();
+        }
+    }, [brandId]);
+
+    // Compatibility adaptors
+    const currentBranchId = currentBranch?.id;
+
     const { user } = useAuthStore();
     const [activeTab, setActiveTab] = useState<'list' | 'transfers'>('list');
     const [showModal, setShowModal] = useState(false);
     const [editingBranch, setEditingBranch] = useState<Branch | null>(null);
     const [showTransferModal, setShowTransferModal] = useState(false);
+    const [selectedTransfer, setSelectedTransfer] = useState<StockTransfer | null>(null);
 
-    const isAdmin = user?.role === 'admin';
-    const activeBranches = branches.filter(b => b.isActive);
+    const isAdmin = ['admin', 'owner', 'manager'].includes(user?.role || '');
+    const activeBranches = branches.filter(b => b.status === 'active');
+    const pendingTransfers = stockTransfers.filter(t => t.status === 'pending' || t.status === 'in_transit');
+
 
     // Styles
     const cardStyle: React.CSSProperties = {
@@ -124,239 +165,537 @@ export function BranchesPage() {
                     </button>
                 </div>
 
+                {/* Error Banner */}
+                {error && (
+                    <div style={{ backgroundColor: '#fee2e2', color: '#dc2626', padding: '12px', borderRadius: '8px', marginBottom: '20px', border: '1px solid #fecaca' }}>
+                        ⚠️ Lỗi: {error}
+                    </div>
+                )}
+
+                {/* DEBUG DIAGNOSTIC PANEL */}
+                <div style={{ backgroundColor: '#fffbeb', border: '1px solid #f59e0b', padding: '15px', borderRadius: '8px', marginBottom: '20px', fontSize: '14px', color: '#92400e' }}>
+                    <h3 style={{ fontWeight: 'bold', margin: '0 0 5px 0' }}>🔧 Thông tin kiểm tra lỗi (Debug Info)</h3>
+                    <div><strong>User ID:</strong> {user?.id || 'Chưa đăng nhập'}</div>
+                    <div><strong>Role:</strong> {user?.role || 'Không có'}</div>
+                    <div><strong>Brand ID:</strong> {brandId ? brandId : <span style={{ color: 'red', fontWeight: 'bold' }}>TRỐNG (NULL) - Nguyên nhân lỗi là đây!</span>}</div>
+                    <div><strong>Store Error:</strong> {error || 'Không có lỗi'}</div>
+                    {!brandId && <div style={{ marginTop: '10px', fontWeight: 'bold', color: 'red' }}>⚠️ CẢNH BÁO: Bạn chưa được liên kết với Thương hiệu nào. Vui lòng liên hệ Admin hệ thống hoặc thử đăng nhập lại.</div>}
+                </div>
+
                 {/* Branch List */}
                 {activeTab === 'list' && (
                     <div>
+                        {/* Loading State */}
+                        {isLoading && (
+                            <div style={{ textAlign: 'center', padding: '40px', color: '#6b7280' }}>
+                                ⏳ Đang tải danh sách chi nhánh...
+                            </div>
+                        )}
+
+                        {/* Empty State */}
+                        {!isLoading && activeBranches.length === 0 && (
+                            <div style={{
+                                textAlign: 'center', padding: '60px 20px',
+                                backgroundColor: 'white', borderRadius: '20px',
+                                border: '2px dashed #e5e7eb'
+                            }}>
+                                <div style={{ fontSize: '48px', marginBottom: '16px' }}>🏪</div>
+                                <h3 style={{ fontSize: '18px', fontWeight: 'bold', color: '#111827', marginBottom: '8px' }}>
+                                    Chưa có chi nhánh nào
+                                </h3>
+                                <p style={{ color: '#6b7280', marginBottom: '20px' }}>
+                                    Thêm chi nhánh đầu tiên để bắt đầu quản lý chuỗi cửa hàng
+                                </p>
+                                {isAdmin && (
+                                    <button
+                                        style={btnPrimary}
+                                        onClick={() => { setEditingBranch(null); setShowModal(true); }}
+                                    >
+                                        + Thêm chi nhánh đầu tiên
+                                    </button>
+                                )}
+                            </div>
+                        )}
+
                         {/* Branch Cards Grid */}
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(350px, 1fr))', gap: '16px' }}>
-                            {activeBranches.map((branch) => (
-                                <div
-                                    key={branch.id}
-                                    style={{
-                                        ...cardStyle,
-                                        borderLeft: branch.id === currentBranchId ? '4px solid #22c55e' : '4px solid transparent',
-                                        marginBottom: 0
-                                    }}
-                                >
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                                        <div>
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                                                <span style={{ fontSize: '18px', fontWeight: 'bold' }}>{branch.name}</span>
-                                                {branch.isHeadquarters && (
-                                                    <span style={{
-                                                        padding: '2px 8px',
-                                                        backgroundColor: '#dbeafe',
-                                                        color: '#2563eb',
-                                                        borderRadius: '12px',
-                                                        fontSize: '11px',
-                                                        fontWeight: 600
-                                                    }}>
-                                                        Trụ sở chính
-                                                    </span>
+                        {activeBranches.length > 0 && (
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(380px, 1fr))', gap: '20px' }}>
+                                {activeBranches.map((branch) => {
+                                    const isSelected = branch.id === currentBranchId;
+                                    return (
+                                        <div
+                                            key={branch.id}
+                                            style={{
+                                                background: isSelected
+                                                    ? 'linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%)'
+                                                    : 'linear-gradient(135deg, #ffffff 0%, #f9fafb 100%)',
+                                                borderRadius: '20px',
+                                                border: isSelected ? '2px solid #22c55e' : '1px solid #e5e7eb',
+                                                padding: '24px',
+                                                boxShadow: isSelected
+                                                    ? '0 10px 40px rgba(34, 197, 94, 0.15)'
+                                                    : '0 4px 20px rgba(0, 0, 0, 0.05)',
+                                                transition: 'all 0.3s ease',
+                                                position: 'relative' as const,
+                                                overflow: 'hidden'
+                                            }}
+                                        >
+                                            {/* Header */}
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' }}>
+                                                <div style={{ flex: 1 }}>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px', flexWrap: 'wrap' }}>
+                                                        <span style={{
+                                                            fontSize: '20px',
+                                                            fontWeight: 700,
+                                                            color: '#111827',
+                                                            letterSpacing: '-0.5px'
+                                                        }}>
+                                                            {branch.name}
+                                                        </span>
+                                                        {branch.code && (
+                                                            <span style={{
+                                                                padding: '3px 10px',
+                                                                backgroundColor: '#f3f4f6',
+                                                                color: '#6b7280',
+                                                                borderRadius: '8px',
+                                                                fontSize: '12px',
+                                                                fontWeight: 600,
+                                                                fontFamily: 'monospace'
+                                                            }}>
+                                                                #{branch.code}
+                                                            </span>
+                                                        )}
+                                                        {branch.is_headquarters && (
+                                                            <span style={{
+                                                                padding: '3px 10px',
+                                                                background: 'linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)',
+                                                                color: 'white',
+                                                                borderRadius: '8px',
+                                                                fontSize: '11px',
+                                                                fontWeight: 700,
+                                                                textTransform: 'uppercase',
+                                                                letterSpacing: '0.5px'
+                                                            }}>
+                                                                ⭐ Trụ sở chính
+                                                            </span>
+                                                        )}
+                                                    </div>
+
+                                                    {isSelected && (
+                                                        <span style={{
+                                                            display: 'inline-flex',
+                                                            alignItems: 'center',
+                                                            gap: '6px',
+                                                            padding: '5px 14px',
+                                                            background: 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)',
+                                                            color: 'white',
+                                                            borderRadius: '20px',
+                                                            fontSize: '12px',
+                                                            fontWeight: 700
+                                                        }}>
+                                                            ✓ Đang làm việc tại đây
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                            {/* Info Section */}
+                                            <div style={{
+                                                backgroundColor: 'rgba(255,255,255,0.7)',
+                                                borderRadius: '12px',
+                                                padding: '16px',
+                                                marginBottom: '16px'
+                                            }}>
+                                                {branch.address && (
+                                                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', marginBottom: '10px', fontSize: '14px' }}>
+                                                        <span style={{ fontSize: '16px' }}>📍</span>
+                                                        <span style={{ color: '#374151', lineHeight: 1.5 }}>{branch.address}</span>
+                                                    </div>
+                                                )}
+                                                {branch.phone && (
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px', fontSize: '14px' }}>
+                                                        <span style={{ fontSize: '16px' }}>📞</span>
+                                                        <span style={{ color: '#374151', fontWeight: 500 }}>{branch.phone}</span>
+                                                    </div>
+                                                )}
+                                                {branch.email && (
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '14px' }}>
+                                                        <span style={{ fontSize: '16px' }}>✉️</span>
+                                                        <span style={{ color: '#374151' }}>{branch.email}</span>
+                                                    </div>
+                                                )}
+                                                {!branch.address && !branch.phone && !branch.email && (
+                                                    <div style={{ color: '#9ca3af', fontStyle: 'italic', fontSize: '14px' }}>
+                                                        Chưa có thông tin liên hệ
+                                                    </div>
                                                 )}
                                             </div>
-                                            <div style={{ fontSize: '13px', color: '#6b7280' }}>
-                                                Mã: <strong>{branch.code}</strong>
-                                            </div>
-                                        </div>
-                                        {branch.id === currentBranchId && (
-                                            <span style={{
-                                                padding: '4px 12px',
-                                                backgroundColor: '#dcfce7',
-                                                color: '#16a34a',
-                                                borderRadius: '16px',
-                                                fontSize: '12px',
-                                                fontWeight: 600
-                                            }}>
-                                                ✓ Đang chọn
-                                            </span>
-                                        )}
-                                    </div>
 
-                                    <div style={{ marginTop: '12px', fontSize: '14px', color: '#374151' }}>
-                                        <div style={{ marginBottom: '4px' }}>📍 {branch.address}</div>
-                                        <div style={{ marginBottom: '4px' }}>📞 {branch.phone}</div>
-                                        {branch.openTime && branch.closeTime && (
-                                            <div>🕐 {branch.openTime} - {branch.closeTime}</div>
-                                        )}
-                                    </div>
-
-                                    <div style={{ display: 'flex', gap: '8px', marginTop: '16px' }}>
-                                        {branch.id !== currentBranchId && (
-                                            <button
-                                                style={{ ...btnPrimary, flex: 1, padding: '8px 16px' }}
-                                                onClick={() => setCurrentBranch(branch.id)}
-                                            >
-                                                Chọn chi nhánh này
-                                            </button>
-                                        )}
-                                        {isAdmin && (
-                                            <>
-                                                <button
-                                                    style={btnSecondary}
-                                                    onClick={() => { setEditingBranch(branch); setShowModal(true); }}
-                                                >
-                                                    ✏️ Sửa
-                                                </button>
-                                                {!branch.isHeadquarters && (
+                                            {/* Actions */}
+                                            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                                                {!isSelected && (
                                                     <button
-                                                        style={{ ...btnSecondary, color: '#dc2626' }}
-                                                        onClick={() => {
-                                                            if (confirm(`Xóa chi nhánh "${branch.name}"?`)) {
-                                                                deleteBranch(branch.id);
-                                                            }
+                                                        style={{
+                                                            flex: 1,
+                                                            padding: '12px 20px',
+                                                            background: 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)',
+                                                            color: 'white',
+                                                            border: 'none',
+                                                            borderRadius: '12px',
+                                                            fontWeight: 700,
+                                                            fontSize: '14px',
+                                                            cursor: 'pointer',
+                                                            boxShadow: '0 4px 15px rgba(34, 197, 94, 0.3)',
+                                                            transition: 'all 0.2s ease'
                                                         }}
+                                                        onClick={() => setCurrentBranch(branch)}
                                                     >
-                                                        🗑️
+                                                        🔄 Chuyển sang chi nhánh này
                                                     </button>
                                                 )}
-                                            </>
-                                        )}
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-
-                        {activeBranches.length === 0 && (
-                            <div style={{ textAlign: 'center', padding: '60px', color: '#9ca3af' }}>
-                                <div style={{ fontSize: '48px', marginBottom: '16px' }}>🏪</div>
-                                <p>Chưa có chi nhánh nào. Bấm "Thêm chi nhánh" để tạo mới.</p>
+                                                {isAdmin && (
+                                                    <>
+                                                        <button
+                                                            style={{
+                                                                padding: '12px 18px',
+                                                                backgroundColor: 'white',
+                                                                color: '#374151',
+                                                                border: '1px solid #e5e7eb',
+                                                                borderRadius: '12px',
+                                                                fontWeight: 600,
+                                                                fontSize: '14px',
+                                                                cursor: 'pointer',
+                                                                transition: 'all 0.2s ease'
+                                                            }}
+                                                            onClick={() => { setEditingBranch(branch); setShowModal(true); }}
+                                                        >
+                                                            ✏️ Sửa
+                                                        </button>
+                                                        {!branch.is_headquarters && (
+                                                            <button
+                                                                style={{
+                                                                    padding: '12px 18px',
+                                                                    backgroundColor: '#fef2f2',
+                                                                    color: '#dc2626',
+                                                                    border: '1px solid #fecaca',
+                                                                    borderRadius: '12px',
+                                                                    fontWeight: 600,
+                                                                    fontSize: '14px',
+                                                                    cursor: 'pointer',
+                                                                    transition: 'all 0.2s ease'
+                                                                }}
+                                                                onClick={() => {
+                                                                    if (confirm(`Xóa chi nhánh "${branch.name}"?`)) {
+                                                                        deleteBranch(branch.id);
+                                                                    }
+                                                                }}
+                                                            >
+                                                                🗑️ Xóa
+                                                            </button>
+                                                        )}
+                                                    </>
+                                                )}
+                                            </div>
+                                        </div>
+                                    );
+                                })}
                             </div>
                         )}
                     </div>
                 )}
 
-                {/* Stock Transfers */}
+                {/* Transfers Tab */}
                 {activeTab === 'transfers' && (
                     <div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                            <h2 style={{ fontSize: '18px', fontWeight: 'bold', margin: 0 }}>Phiếu chuyển hàng</h2>
-                            <button
-                                style={btnPrimary}
-                                onClick={() => setShowTransferModal(true)}
-                            >
-                                + Tạo phiếu chuyển
-                            </button>
+                        {/* Header with Add Button */}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                            <h2 style={{ fontSize: '18px', fontWeight: 'bold', color: '#111827', margin: 0 }}>
+                                Danh sách phiếu chuyển hàng
+                            </h2>
+                            {isAdmin && (
+                                <button
+                                    style={{
+                                        padding: '10px 20px',
+                                        background: 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)',
+                                        color: 'white',
+                                        border: 'none',
+                                        borderRadius: '8px',
+                                        fontWeight: 600,
+                                        cursor: 'pointer',
+                                        boxShadow: '0 4px 15px rgba(34, 197, 94, 0.3)'
+                                    }}
+                                    onClick={() => setShowTransferModal(true)}
+                                >
+                                    + Tạo phiếu chuyển
+                                </button>
+                            )}
                         </div>
 
-                        <div style={cardStyle}>
-                            {stockTransfers.length === 0 ? (
-                                <div style={{ textAlign: 'center', padding: '40px', color: '#9ca3af' }}>
-                                    <div style={{ fontSize: '48px', marginBottom: '16px' }}>🚚</div>
-                                    <p>Chưa có phiếu chuyển hàng nào.</p>
-                                </div>
-                            ) : (
-                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
-                                    <thead>
-                                        <tr style={{ borderBottom: '2px solid #e5e7eb' }}>
-                                            <th style={{ textAlign: 'left', padding: '12px' }}>Mã phiếu</th>
-                                            <th style={{ textAlign: 'left', padding: '12px' }}>Từ</th>
-                                            <th style={{ textAlign: 'left', padding: '12px' }}>Đến</th>
-                                            <th style={{ textAlign: 'center', padding: '12px' }}>Số SP</th>
-                                            <th style={{ textAlign: 'center', padding: '12px' }}>Trạng thái</th>
-                                            <th style={{ textAlign: 'center', padding: '12px' }}>Ngày tạo</th>
-                                            <th style={{ textAlign: 'center', padding: '12px' }}>Thao tác</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {stockTransfers.map((transfer) => {
-                                            const fromBranch = branches.find(b => b.id === transfer.fromBranchId);
-                                            const toBranch = branches.find(b => b.id === transfer.toBranchId);
-                                            const statusColors: Record<string, { bg: string; color: string; label: string }> = {
-                                                pending: { bg: '#fef9c3', color: '#ca8a04', label: 'Chờ xuất' },
-                                                in_transit: { bg: '#dbeafe', color: '#2563eb', label: 'Đang chuyển' },
-                                                completed: { bg: '#dcfce7', color: '#16a34a', label: 'Hoàn tất' },
-                                                cancelled: { bg: '#fef2f2', color: '#dc2626', label: 'Đã hủy' },
-                                            };
-                                            const status = statusColors[transfer.status];
+                        {/* Loading State */}
+                        {transfersLoading && (
+                            <div style={{ textAlign: 'center', padding: '40px', color: '#6b7280' }}>
+                                ⏳ Đang tải danh sách phiếu chuyển...
+                            </div>
+                        )}
 
-                                            return (
-                                                <tr key={transfer.id} style={{ borderBottom: '1px solid #e5e7eb' }}>
-                                                    <td style={{ padding: '12px', fontWeight: 600 }}>
-                                                        #{transfer.id.slice(-6).toUpperCase()}
-                                                    </td>
-                                                    <td style={{ padding: '12px' }}>{fromBranch?.name || '-'}</td>
-                                                    <td style={{ padding: '12px' }}>{toBranch?.name || '-'}</td>
-                                                    <td style={{ padding: '12px', textAlign: 'center' }}>{transfer.items.length}</td>
-                                                    <td style={{ padding: '12px', textAlign: 'center' }}>
+                        {/* Empty State */}
+                        {!transfersLoading && stockTransfers.length === 0 && (
+                            <div style={{
+                                textAlign: 'center', padding: '60px 20px',
+                                backgroundColor: 'white', borderRadius: '20px',
+                                border: '2px dashed #e5e7eb'
+                            }}>
+                                <div style={{ fontSize: '48px', marginBottom: '16px' }}>🚚</div>
+                                <h3 style={{ fontSize: '18px', fontWeight: 'bold', color: '#111827', marginBottom: '8px' }}>
+                                    Chưa có phiếu chuyển nào
+                                </h3>
+                                <p style={{ color: '#6b7280', marginBottom: '20px' }}>
+                                    Tạo phiếu chuyển hàng để điều phối tồn kho giữa các chi nhánh
+                                </p>
+                                {isAdmin && (
+                                    <button
+                                        style={{
+                                            padding: '10px 20px',
+                                            background: 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)',
+                                            color: 'white',
+                                            border: 'none',
+                                            borderRadius: '8px',
+                                            fontWeight: 600,
+                                            cursor: 'pointer'
+                                        }}
+                                        onClick={() => setShowTransferModal(true)}
+                                    >
+                                        + Tạo phiếu chuyển đầu tiên
+                                    </button>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Transfers List */}
+                        {!transfersLoading && stockTransfers.length > 0 && (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                                {stockTransfers.map((transfer) => {
+                                    const statusColors: Record<string, { bg: string; color: string; label: string }> = {
+                                        pending: { bg: '#fef3c7', color: '#d97706', label: '⏳ Chờ xuất kho' },
+                                        in_transit: { bg: '#dbeafe', color: '#2563eb', label: '🚚 Đang vận chuyển' },
+                                        completed: { bg: '#dcfce7', color: '#16a34a', label: '✅ Đã hoàn thành' },
+                                        cancelled: { bg: '#fee2e2', color: '#dc2626', label: '❌ Đã hủy' }
+                                    };
+                                    const status = statusColors[transfer.status] || statusColors.pending;
+
+                                    return (
+                                        <div
+                                            key={transfer.id}
+                                            style={{
+                                                backgroundColor: 'white',
+                                                borderRadius: '16px',
+                                                border: '1px solid #e5e7eb',
+                                                padding: '20px',
+                                                boxShadow: '0 2px 8px rgba(0,0,0,0.04)'
+                                            }}
+                                        >
+                                            {/* Header */}
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' }}>
+                                                <div>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '4px' }}>
+                                                        <span style={{ fontSize: '16px', fontWeight: 700, color: '#111827' }}>
+                                                            {transfer.transfer_code}
+                                                        </span>
                                                         <span style={{
                                                             padding: '4px 10px',
                                                             backgroundColor: status.bg,
                                                             color: status.color,
-                                                            borderRadius: '12px',
+                                                            borderRadius: '6px',
                                                             fontSize: '12px',
                                                             fontWeight: 600
                                                         }}>
                                                             {status.label}
                                                         </span>
-                                                    </td>
-                                                    <td style={{ padding: '12px', textAlign: 'center', fontSize: '13px', color: '#6b7280' }}>
-                                                        {new Date(transfer.createdAt).toLocaleDateString('vi-VN')}
-                                                    </td>
-                                                    <td style={{ padding: '12px', textAlign: 'center' }}>
-                                                        {transfer.status === 'pending' && (
+                                                    </div>
+                                                    <div style={{ fontSize: '14px', color: '#6b7280' }}>
+                                                        {new Date(transfer.created_at).toLocaleDateString('vi-VN', {
+                                                            day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
+                                                        })}
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            {/* Route */}
+                                            <div style={{
+                                                display: 'flex', alignItems: 'center', gap: '12px',
+                                                padding: '12px', backgroundColor: '#f9fafb', borderRadius: '10px', marginBottom: '12px'
+                                            }}>
+                                                <div style={{ flex: 1, textAlign: 'center' }}>
+                                                    <div style={{ fontSize: '12px', color: '#6b7280', marginBottom: '4px' }}>Từ</div>
+                                                    <div style={{ fontWeight: 600, color: '#111827' }}>
+                                                        {transfer.from_branch?.name || 'Chi nhánh nguồn'}
+                                                    </div>
+                                                </div>
+                                                <div style={{ fontSize: '24px' }}>→</div>
+                                                <div style={{ flex: 1, textAlign: 'center' }}>
+                                                    <div style={{ fontSize: '12px', color: '#6b7280', marginBottom: '4px' }}>Đến</div>
+                                                    <div style={{ fontWeight: 600, color: '#111827' }}>
+                                                        {transfer.to_branch?.name || 'Chi nhánh đích'}
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            {/* Items Summary */}
+                                            <div style={{ fontSize: '14px', color: '#374151', marginBottom: '16px' }}>
+                                                📦 {transfer.items?.length || 0} sản phẩm
+                                                {transfer.notes && <span style={{ marginLeft: '12px', color: '#6b7280' }}>• {transfer.notes}</span>}
+                                            </div>
+
+                                            {/* Actions */}
+                                            {isAdmin && (transfer.status === 'pending' || transfer.status === 'in_transit') && (
+                                                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                                                    {transfer.status === 'pending' && (
+                                                        <>
                                                             <button
-                                                                style={{ ...btnSecondary, fontSize: '12px', padding: '4px 10px', marginRight: '4px' }}
-                                                                onClick={() => cancelStockTransfer(transfer.id)}
-                                                            >
-                                                                Hủy
-                                                            </button>
-                                                        )}
-                                                        {(transfer.status === 'pending' || transfer.status === 'in_transit') && (
-                                                            <button
-                                                                style={{ ...btnPrimary, fontSize: '12px', padding: '4px 10px' }}
-                                                                onClick={() => {
-                                                                    const received = transfer.items.map(i => ({
-                                                                        productId: i.productId,
-                                                                        receivedQuantity: i.quantity
-                                                                    }));
-                                                                    completeStockTransfer(transfer.id, received);
+                                                                onClick={async () => {
+                                                                    if (confirm('Xác nhận xuất kho? Tồn kho sẽ được trừ từ chi nhánh nguồn.')) {
+                                                                        await shipTransfer(transfer.id, user?.id || '');
+                                                                        if (brandId) fetchTransfers(brandId);
+                                                                    }
+                                                                }}
+                                                                style={{
+                                                                    padding: '8px 16px',
+                                                                    background: 'linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)',
+                                                                    color: 'white',
+                                                                    border: 'none',
+                                                                    borderRadius: '8px',
+                                                                    fontWeight: 600,
+                                                                    cursor: 'pointer'
                                                                 }}
                                                             >
-                                                                Hoàn tất
+                                                                📤 Xuất kho
                                                             </button>
-                                                        )}
-                                                    </td>
-                                                </tr>
-                                            );
-                                        })}
-                                    </tbody>
-                                </table>
-                            )}
-                        </div>
+                                                            <button
+                                                                onClick={async () => {
+                                                                    const reason = prompt('Lý do hủy phiếu?');
+                                                                    if (reason !== null) {
+                                                                        await cancelTransfer(transfer.id, user?.id || '', reason);
+                                                                        if (brandId) fetchTransfers(brandId);
+                                                                    }
+                                                                }}
+                                                                style={{
+                                                                    padding: '8px 16px',
+                                                                    backgroundColor: '#fef2f2',
+                                                                    color: '#dc2626',
+                                                                    border: '1px solid #fecaca',
+                                                                    borderRadius: '8px',
+                                                                    fontWeight: 600,
+                                                                    cursor: 'pointer'
+                                                                }}
+                                                            >
+                                                                Hủy phiếu
+                                                            </button>
+                                                        </>
+                                                    )}
+                                                    {transfer.status === 'in_transit' && (
+                                                        <>
+                                                            <button
+                                                                onClick={async () => {
+                                                                    if (confirm('Xác nhận đã nhận hàng? Tồn kho sẽ được cộng vào chi nhánh đích.')) {
+                                                                        await completeTransfer(transfer.id, user?.id || '');
+                                                                        if (brandId) fetchTransfers(brandId);
+                                                                    }
+                                                                }}
+                                                                style={{
+                                                                    padding: '8px 16px',
+                                                                    background: 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)',
+                                                                    color: 'white',
+                                                                    border: 'none',
+                                                                    borderRadius: '8px',
+                                                                    fontWeight: 600,
+                                                                    cursor: 'pointer'
+                                                                }}
+                                                            >
+                                                                ✅ Xác nhận nhận hàng
+                                                            </button>
+                                                            <button
+                                                                onClick={async () => {
+                                                                    const reason = prompt('Lý do hủy phiếu? (Hàng đã xuất sẽ được hoàn lại)');
+                                                                    if (reason !== null) {
+                                                                        await cancelTransfer(transfer.id, user?.id || '', reason);
+                                                                        if (brandId) fetchTransfers(brandId);
+                                                                    }
+                                                                }}
+                                                                style={{
+                                                                    padding: '8px 16px',
+                                                                    backgroundColor: '#fef2f2',
+                                                                    color: '#dc2626',
+                                                                    border: '1px solid #fecaca',
+                                                                    borderRadius: '8px',
+                                                                    fontWeight: 600,
+                                                                    cursor: 'pointer'
+                                                                }}
+                                                            >
+                                                                Hủy phiếu
+                                                            </button>
+                                                        </>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
                     </div>
                 )}
+
+                {/* Branch Modal */}
+                {showModal && (
+                    <BranchModal
+                        branch={editingBranch}
+                        error={error}
+                        onClose={() => { setShowModal(false); setEditingBranch(null); }}
+                        onSave={async (data) => {
+                            let result = null;
+                            if (editingBranch) {
+                                result = await updateBranch(editingBranch.id, data);
+                            } else if (brandId) {
+                                result = await createBranch({ ...data, brand_id: brandId, status: 'active' });
+                            } else {
+                                console.error('No brand_id available.');
+                                alert('Lỗi: Không tìm thấy thương hiệu. Vui lòng đăng nhập lại.');
+                                return;
+                            }
+
+                            if (result) {
+                                setShowModal(false);
+                                setEditingBranch(null);
+                            }
+                        }}
+                    />
+                )}
+
+                {/* Transfer Modal */}
+                {showTransferModal && (
+                    <TransferModal
+                        branches={activeBranches}
+                        products={products}
+                        currentBranchId={currentBranchId || null}
+                        onClose={() => setShowTransferModal(false)}
+                        onSave={async (data) => {
+                            if (brandId && user?.id) {
+                                await createTransfer({
+                                    brand_id: brandId,
+                                    from_branch_id: data.fromBranchId,
+                                    to_branch_id: data.toBranchId,
+                                    notes: data.notes,
+                                    items: data.items.map(item => ({
+                                        product_id: item.productId,
+                                        quantity: item.quantity
+                                    }))
+                                }, user.id);
+                            }
+                            setShowTransferModal(false);
+                        }}
+                    />
+                )}
             </div>
-
-            {/* Branch Modal */}
-            {showModal && (
-                <BranchModal
-                    branch={editingBranch}
-                    onClose={() => { setShowModal(false); setEditingBranch(null); }}
-                    onSave={(data) => {
-                        if (editingBranch) {
-                            updateBranch(editingBranch.id, data);
-                        } else {
-                            addBranch({ ...data, isActive: true, isHeadquarters: false });
-                        }
-                        setShowModal(false);
-                        setEditingBranch(null);
-                    }}
-                />
-            )}
-
-            {/* Transfer Modal */}
-            {showTransferModal && (
-                <TransferModal
-                    branches={activeBranches}
-                    currentBranchId={currentBranchId}
-                    onClose={() => setShowTransferModal(false)}
-                    onSave={(data) => {
-                        createStockTransfer(data);
-                        setShowTransferModal(false);
-                    }}
-                />
-            )}
         </div>
     );
 }
@@ -367,21 +706,20 @@ export function BranchesPage() {
 
 interface BranchModalProps {
     branch: Branch | null;
+    error: string | null;
     onClose: () => void;
-    onSave: (data: Omit<Branch, 'id' | 'createdAt' | 'updatedAt'>) => void;
+    onSave: (data: Partial<Branch>) => void;
 }
 
-function BranchModal({ branch, onClose, onSave }: BranchModalProps) {
+function BranchModal({ branch, error, onClose, onSave }: BranchModalProps) {
     const [formData, setFormData] = useState({
         name: branch?.name || '',
         code: branch?.code || '',
         address: branch?.address || '',
         phone: branch?.phone || '',
         email: branch?.email || '',
-        openTime: branch?.openTime || '08:00',
-        closeTime: branch?.closeTime || '22:00',
-        isHeadquarters: branch?.isHeadquarters || false,
-        isActive: branch?.isActive ?? true,
+        is_headquarters: branch?.is_headquarters || false,
+        status: branch?.status ?? 'active',
     });
 
     const inputStyle: React.CSSProperties = {
@@ -391,6 +729,31 @@ function BranchModal({ branch, onClose, onSave }: BranchModalProps) {
 
     const labelStyle: React.CSSProperties = {
         display: 'block', fontSize: '13px', fontWeight: 500, color: '#374151', marginBottom: '6px'
+    };
+
+    const [validationError, setValidationError] = useState<string | null>(null);
+    const [isSubmitting, setIsSubmitting] = useState(false);
+
+    const handleSave = async () => {
+        // alert('DEBUG: Button Clicked'); 
+        setValidationError(null);
+        if (!formData.name.trim()) {
+            setValidationError('Vui lòng nhập tên chi nhánh');
+            return;
+        }
+        if (!formData.code.trim()) {
+            setValidationError('Vui lòng nhập mã chi nhánh');
+            return;
+        }
+
+        setIsSubmitting(true);
+        try {
+            await onSave(formData);
+        } catch (e: any) {
+            alert('DEBUG: Error in handleSave: ' + e.message);
+        } finally {
+            setIsSubmitting(false);
+        }
     };
 
     return (
@@ -405,6 +768,25 @@ function BranchModal({ branch, onClose, onSave }: BranchModalProps) {
                 <h2 style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '20px' }}>
                     {branch ? 'Sửa chi nhánh' : 'Thêm chi nhánh mới'}
                 </h2>
+
+                {error && (
+                    <div style={{
+                        backgroundColor: '#fee2e2', color: '#dc2626',
+                        padding: '12px', borderRadius: '8px', marginBottom: '16px',
+                        border: '1px solid #fecaca', fontSize: '14px'
+                    }}>
+                        ⚠️ {error}
+                    </div>
+                )}
+                {validationError && (
+                    <div style={{
+                        backgroundColor: '#fff7ed', color: '#c2410c',
+                        padding: '12px', borderRadius: '8px', marginBottom: '16px',
+                        border: '1px solid #ffedd5', fontSize: '14px'
+                    }}>
+                        ⚠️ {validationError}
+                    </div>
+                )}
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                     <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '12px' }}>
@@ -464,26 +846,25 @@ function BranchModal({ branch, onClose, onSave }: BranchModalProps) {
                         </div>
                     </div>
 
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                    {/* Time fields removed from interface */}
+                    {/* <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                         <div>
                             <label style={labelStyle}>Giờ mở cửa</label>
                             <input
                                 type="time"
-                                value={formData.openTime}
-                                onChange={(e) => setFormData({ ...formData, openTime: e.target.value })}
                                 style={inputStyle}
+                                disabled
                             />
                         </div>
                         <div>
                             <label style={labelStyle}>Giờ đóng cửa</label>
                             <input
                                 type="time"
-                                value={formData.closeTime}
-                                onChange={(e) => setFormData({ ...formData, closeTime: e.target.value })}
                                 style={inputStyle}
+                                disabled
                             />
                         </div>
-                    </div>
+                    </div> */}
                 </div>
 
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '24px' }}>
@@ -491,10 +872,16 @@ function BranchModal({ branch, onClose, onSave }: BranchModalProps) {
                         Hủy
                     </button>
                     <button
-                        onClick={() => onSave(formData as any)}
-                        style={{ padding: '10px 20px', backgroundColor: '#22c55e', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 600, cursor: 'pointer' }}
+                        onClick={handleSave}
+                        disabled={isSubmitting}
+                        style={{
+                            padding: '10px 20px',
+                            backgroundColor: isSubmitting ? '#9ca3af' : '#22c55e',
+                            color: 'white', border: 'none', borderRadius: '8px',
+                            fontWeight: 600, cursor: isSubmitting ? 'not-allowed' : 'pointer'
+                        }}
                     >
-                        {branch ? 'Cập nhật' : 'Tạo chi nhánh'}
+                        {isSubmitting ? 'Đang lưu...' : (branch ? 'Cập nhật' : 'Tạo chi nhánh')}
                     </button>
                 </div>
             </div>
@@ -503,25 +890,61 @@ function BranchModal({ branch, onClose, onSave }: BranchModalProps) {
 }
 
 // ============================================================================
-// TRANSFER MODAL
+// TRANSFER MODAL - With Product Picker
 // ============================================================================
 
 interface TransferModalProps {
     branches: Branch[];
+    products: Product[];
     currentBranchId: string | null;
     onClose: () => void;
-    onSave: (data: { fromBranchId: string; toBranchId: string; items: any[]; notes?: string; createdBy: string }) => void;
+    onSave: (data: { fromBranchId: string; toBranchId: string; items: { productId: string; productName: string; quantity: number }[]; notes?: string }) => void;
 }
 
-function TransferModal({ branches, currentBranchId, onClose, onSave }: TransferModalProps) {
+function TransferModal({ branches, products, currentBranchId, onClose, onSave }: TransferModalProps) {
     const [formData, setFormData] = useState({
         fromBranchId: currentBranchId || '',
         toBranchId: '',
         notes: '',
     });
-    const [items, setItems] = useState<{ productId: string; productName: string; quantity: number }[]>([
-        { productId: 'demo-1', productName: 'Sản phẩm mẫu', quantity: 10 }
-    ]);
+    const [items, setItems] = useState<{ productId: string; productName: string; quantity: number }[]>([]);
+    const [searchQuery, setSearchQuery] = useState('');
+    const [showProductPicker, setShowProductPicker] = useState(false);
+
+    // Filter products based on search
+    const filteredProducts = products.filter(p =>
+        p.is_active &&
+        (p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            p.barcode?.includes(searchQuery) ||
+            p.sku?.toLowerCase().includes(searchQuery.toLowerCase()))
+    ).slice(0, 20);
+
+    const addProduct = (product: Product) => {
+        const existing = items.find(i => i.productId === product.id);
+        if (existing) {
+            setItems(items.map(i =>
+                i.productId === product.id ? { ...i, quantity: i.quantity + 1 } : i
+            ));
+        } else {
+            setItems([...items, { productId: product.id, productName: product.name, quantity: 1 }]);
+        }
+        setSearchQuery('');
+        setShowProductPicker(false);
+    };
+
+    const updateQuantity = (productId: string, quantity: number) => {
+        if (quantity <= 0) {
+            setItems(items.filter(i => i.productId !== productId));
+        } else {
+            setItems(items.map(i =>
+                i.productId === productId ? { ...i, quantity } : i
+            ));
+        }
+    };
+
+    const removeItem = (productId: string) => {
+        setItems(items.filter(i => i.productId !== productId));
+    };
 
     const inputStyle: React.CSSProperties = {
         width: '100%', padding: '10px 14px', borderRadius: '8px',
@@ -538,15 +961,16 @@ function TransferModal({ branches, currentBranchId, onClose, onSave }: TransferM
             display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999
         }}>
             <div style={{
-                backgroundColor: 'white', borderRadius: '16px', width: '550px',
+                backgroundColor: 'white', borderRadius: '16px', width: '650px',
                 maxHeight: '90vh', overflow: 'auto', padding: '24px'
             }}>
-                <h2 style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '20px' }}>
-                    Tạo phiếu chuyển hàng
+                <h2 style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    🚚 Tạo phiếu chuyển hàng
                 </h2>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                    {/* Branch Selection */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: '12px', alignItems: 'end' }}>
                         <div>
                             <label style={labelStyle}>Từ chi nhánh</label>
                             <select
@@ -560,6 +984,7 @@ function TransferModal({ branches, currentBranchId, onClose, onSave }: TransferM
                                 ))}
                             </select>
                         </div>
+                        <div style={{ padding: '10px', fontSize: '20px' }}>→</div>
                         <div>
                             <label style={labelStyle}>Đến chi nhánh</label>
                             <select
@@ -575,21 +1000,117 @@ function TransferModal({ branches, currentBranchId, onClose, onSave }: TransferM
                         </div>
                     </div>
 
+                    {/* Product Picker */}
                     <div>
-                        <label style={labelStyle}>Sản phẩm chuyển (Demo)</label>
-                        <div style={{ backgroundColor: '#f9fafb', padding: '12px', borderRadius: '8px', fontSize: '14px' }}>
-                            {items.map((item, idx) => (
-                                <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0' }}>
-                                    <span>{item.productName}</span>
-                                    <span><strong>{item.quantity}</strong> đơn vị</span>
+                        <label style={labelStyle}>Thêm sản phẩm</label>
+                        <div style={{ position: 'relative' }}>
+                            <input
+                                type="text"
+                                placeholder="🔍 Tìm sản phẩm theo tên, mã vạch..."
+                                value={searchQuery}
+                                onChange={(e) => {
+                                    setSearchQuery(e.target.value);
+                                    setShowProductPicker(e.target.value.length > 0);
+                                }}
+                                onFocus={() => setShowProductPicker(searchQuery.length > 0)}
+                                style={inputStyle}
+                            />
+                            {showProductPicker && filteredProducts.length > 0 && (
+                                <div style={{
+                                    position: 'absolute', top: '100%', left: 0, right: 0,
+                                    backgroundColor: 'white', border: '1px solid #e5e7eb',
+                                    borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+                                    maxHeight: '200px', overflowY: 'auto', zIndex: 10
+                                }}>
+                                    {filteredProducts.map(product => (
+                                        <div
+                                            key={product.id}
+                                            onClick={() => addProduct(product)}
+                                            style={{
+                                                padding: '10px 14px', cursor: 'pointer',
+                                                borderBottom: '1px solid #f3f4f6',
+                                                display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+                                            }}
+                                            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f9fafb'}
+                                            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'white'}
+                                        >
+                                            <div>
+                                                <div style={{ fontWeight: 500 }}>{product.name}</div>
+                                                <div style={{ fontSize: '12px', color: '#6b7280' }}>
+                                                    {product.barcode && `Mã: ${product.barcode}`} • Tồn: {product.current_stock}
+                                                </div>
+                                            </div>
+                                            <span style={{ color: '#22c55e' }}>+ Thêm</span>
+                                        </div>
+                                    ))}
                                 </div>
-                            ))}
+                            )}
                         </div>
-                        <p style={{ fontSize: '12px', color: '#9ca3af', marginTop: '8px' }}>
-                            💡 Trong phiên bản đầy đủ, bạn có thể chọn sản phẩm từ danh sách tồn kho
-                        </p>
                     </div>
 
+                    {/* Selected Items */}
+                    <div>
+                        <label style={labelStyle}>Danh sách sản phẩm ({items.length})</label>
+                        {items.length === 0 ? (
+                            <div style={{
+                                backgroundColor: '#f9fafb', padding: '20px', borderRadius: '8px',
+                                textAlign: 'center', color: '#6b7280', fontSize: '14px'
+                            }}>
+                                📦 Chưa có sản phẩm nào. Tìm và thêm sản phẩm ở trên.
+                            </div>
+                        ) : (
+                            <div style={{
+                                backgroundColor: '#f9fafb', borderRadius: '8px',
+                                maxHeight: '200px', overflowY: 'auto'
+                            }}>
+                                {items.map((item) => (
+                                    <div key={item.productId} style={{
+                                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                                        padding: '12px', borderBottom: '1px solid #e5e7eb'
+                                    }}>
+                                        <span style={{ flex: 1, fontWeight: 500 }}>{item.productName}</span>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                            <button
+                                                onClick={() => updateQuantity(item.productId, item.quantity - 1)}
+                                                style={{
+                                                    width: '28px', height: '28px', borderRadius: '6px',
+                                                    border: '1px solid #e5e7eb', backgroundColor: 'white',
+                                                    cursor: 'pointer', fontWeight: 'bold'
+                                                }}
+                                            >-</button>
+                                            <input
+                                                type="number"
+                                                value={item.quantity}
+                                                onChange={(e) => updateQuantity(item.productId, parseInt(e.target.value) || 0)}
+                                                style={{
+                                                    width: '60px', textAlign: 'center', padding: '4px 8px',
+                                                    borderRadius: '6px', border: '1px solid #e5e7eb'
+                                                }}
+                                            />
+                                            <button
+                                                onClick={() => updateQuantity(item.productId, item.quantity + 1)}
+                                                style={{
+                                                    width: '28px', height: '28px', borderRadius: '6px',
+                                                    border: '1px solid #e5e7eb', backgroundColor: 'white',
+                                                    cursor: 'pointer', fontWeight: 'bold'
+                                                }}
+                                            >+</button>
+                                            <button
+                                                onClick={() => removeItem(item.productId)}
+                                                style={{
+                                                    width: '28px', height: '28px', borderRadius: '6px',
+                                                    border: '1px solid #fecaca', backgroundColor: '#fef2f2',
+                                                    color: '#dc2626', cursor: 'pointer'
+                                                }}
+                                            >×</button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Notes */}
                     <div>
                         <label style={labelStyle}>Ghi chú</label>
                         <textarea
@@ -601,8 +1122,12 @@ function TransferModal({ branches, currentBranchId, onClose, onSave }: TransferM
                     </div>
                 </div>
 
+                {/* Actions */}
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '24px' }}>
-                    <button onClick={onClose} style={{ padding: '10px 20px', backgroundColor: '#f3f4f6', border: 'none', borderRadius: '8px', fontWeight: 500, cursor: 'pointer' }}>
+                    <button onClick={onClose} style={{
+                        padding: '10px 20px', backgroundColor: '#f3f4f6',
+                        border: 'none', borderRadius: '8px', fontWeight: 500, cursor: 'pointer'
+                    }}>
                         Hủy
                     </button>
                     <button
@@ -611,17 +1136,27 @@ function TransferModal({ branches, currentBranchId, onClose, onSave }: TransferM
                                 alert('Vui lòng chọn chi nhánh nguồn và đích');
                                 return;
                             }
+                            if (items.length === 0) {
+                                alert('Vui lòng thêm ít nhất một sản phẩm');
+                                return;
+                            }
                             onSave({
                                 fromBranchId: formData.fromBranchId,
                                 toBranchId: formData.toBranchId,
                                 items,
                                 notes: formData.notes,
-                                createdBy: 'current-user',
                             });
                         }}
-                        style={{ padding: '10px 20px', backgroundColor: '#22c55e', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 600, cursor: 'pointer' }}
+                        disabled={items.length === 0}
+                        style={{
+                            padding: '10px 20px',
+                            background: items.length === 0 ? '#e5e7eb' : 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)',
+                            color: items.length === 0 ? '#9ca3af' : 'white',
+                            border: 'none', borderRadius: '8px', fontWeight: 600, cursor: items.length === 0 ? 'not-allowed' : 'pointer',
+                            boxShadow: items.length > 0 ? '0 4px 15px rgba(34, 197, 94, 0.3)' : 'none'
+                        }}
                     >
-                        Tạo phiếu chuyển
+                        Tạo phiếu chuyển ({items.length})
                     </button>
                 </div>
             </div>
@@ -630,3 +1165,4 @@ function TransferModal({ branches, currentBranchId, onClose, onSave }: TransferM
 }
 
 export default BranchesPage;
+

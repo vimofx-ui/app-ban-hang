@@ -30,7 +30,8 @@ export function PurchaseOrdersPage() {
     const {
         orders, isLoading, loadOrders, createOrder, updateOrder, receiveOrder,
         cancelOrder, duplicateOrder, processPayment, confirmOrder, returnOrder,
-        selectedOrderId, setSelectedOrder, getOrderById
+        selectedOrderId, setSelectedOrder, getOrderById,
+        smartPOSuggestions, isLoadingSmartPO, loadSmartPOSuggestions, createSmartPOs
     } = usePurchaseOrderStore();
     const { suppliers, loadSuppliers } = useSupplierStore();
     const { products, loadProducts } = useProductStore();
@@ -39,6 +40,7 @@ export function PurchaseOrdersPage() {
     const [tabFilter, setTabFilter] = useState<TabFilter>('all');
     const [searchQuery, setSearchQuery] = useState('');
     const [editingOrder, setEditingOrder] = useState<PurchaseOrderWithItems | null>(null);
+    const [showSmartPOModal, setShowSmartPOModal] = useState(false);
 
     // Advanced Filters
     const [filterStatus, setFilterStatus] = useState<string>('');
@@ -248,6 +250,15 @@ export function PurchaseOrdersPage() {
                             <button onClick={handleCreate} style={styles.primaryButton}>
                                 ➕ Tạo đơn nhập hàng
                             </button>
+                            <button
+                                onClick={async () => {
+                                    await loadSmartPOSuggestions();
+                                    setShowSmartPOModal(true);
+                                }}
+                                style={{ ...styles.primaryButton, backgroundColor: '#059669' }}
+                            >
+                                🧠 Tạo PO Thông Minh
+                            </button>
                         </div>
                     </div>
                 </header>
@@ -421,6 +432,176 @@ export function PurchaseOrdersPage() {
                         </table>
                     </div>
                 </div>
+
+                {/* Smart PO Modal */}
+                {showSmartPOModal && (
+                    <div style={{
+                        position: 'fixed',
+                        inset: 0,
+                        backgroundColor: 'rgba(0,0,0,0.5)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        zIndex: 1000
+                    }}>
+                        <div style={{
+                            backgroundColor: 'white',
+                            borderRadius: '12px',
+                            width: '90%',
+                            maxWidth: '900px',
+                            maxHeight: '80vh',
+                            overflow: 'hidden',
+                            display: 'flex',
+                            flexDirection: 'column'
+                        }}>
+                            {/* Modal Header */}
+                            <div style={{
+                                padding: '16px 24px',
+                                borderBottom: '1px solid #e5e7eb',
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'center'
+                            }}>
+                                <div>
+                                    <h2 style={{ margin: 0, fontSize: '18px', fontWeight: 600 }}>
+                                        🧠 Tạo Đơn Nhập Hàng Thông Minh
+                                    </h2>
+                                    <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: '#6b7280' }}>
+                                        Hệ thống tự động phát hiện {smartPOSuggestions.length} sản phẩm hết/sắp hết hàng
+                                    </p>
+                                </div>
+                                <button
+                                    onClick={() => setShowSmartPOModal(false)}
+                                    style={{
+                                        background: 'none',
+                                        border: 'none',
+                                        fontSize: '24px',
+                                        cursor: 'pointer',
+                                        color: '#6b7280'
+                                    }}
+                                >
+                                    ×
+                                </button>
+                            </div>
+
+                            {/* Modal Body */}
+                            <div style={{ flex: 1, overflow: 'auto', padding: '16px 24px' }}>
+                                {isLoadingSmartPO ? (
+                                    <div style={{ textAlign: 'center', padding: '40px', color: '#6b7280' }}>
+                                        Đang phân tích dữ liệu bán hàng...
+                                    </div>
+                                ) : smartPOSuggestions.length === 0 ? (
+                                    <div style={{ textAlign: 'center', padding: '40px', color: '#6b7280' }}>
+                                        <div style={{ fontSize: '48px', marginBottom: '16px' }}>✅</div>
+                                        <div style={{ fontSize: '16px', fontWeight: 500 }}>Tuyệt vời! Không có sản phẩm nào hết hàng</div>
+                                        <div style={{ fontSize: '13px', marginTop: '8px' }}>Tất cả sản phẩm đều có tồn kho trên mức tối thiểu</div>
+                                    </div>
+                                ) : (
+                                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
+                                        <thead>
+                                            <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                                                <th style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 500, color: '#6b7280' }}>Sản phẩm</th>
+                                                <th style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 500, color: '#6b7280' }}>Tồn kho</th>
+                                                <th style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 500, color: '#6b7280' }}>Tối thiểu</th>
+                                                <th style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 500, color: '#6b7280' }}>Thiếu</th>
+                                                <th style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 500, color: '#6b7280' }}>NCC đề xuất</th>
+                                                <th style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 500, color: '#6b7280' }}>Giá nhập</th>
+                                                <th style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 500, color: '#6b7280' }}>SL đề xuất</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {smartPOSuggestions.map((item, idx) => (
+                                                <tr key={idx} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                                                    <td style={{ padding: '10px 12px' }}>
+                                                        <div style={{ fontWeight: 500 }}>{item.product_name}</div>
+                                                        <div style={{ fontSize: '12px', color: '#6b7280' }}>{item.product_sku}</div>
+                                                    </td>
+                                                    <td style={{ padding: '10px 12px', textAlign: 'right', color: item.current_stock <= 0 ? '#dc2626' : '#f59e0b', fontWeight: 500 }}>
+                                                        {item.current_stock}
+                                                    </td>
+                                                    <td style={{ padding: '10px 12px', textAlign: 'right' }}>{item.min_stock}</td>
+                                                    <td style={{ padding: '10px 12px', textAlign: 'right', color: '#dc2626', fontWeight: 500 }}>
+                                                        {item.shortage > 0 ? `-${item.shortage}` : '0'}
+                                                    </td>
+                                                    <td style={{ padding: '10px 12px', color: '#3b82f6' }}>
+                                                        {item.suggested_supplier_name || 'Chưa có NCC'}
+                                                    </td>
+                                                    <td style={{ padding: '10px 12px', textAlign: 'right' }}>
+                                                        {item.suggested_price ? formatVND(item.suggested_price) : '---'}
+                                                    </td>
+                                                    <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 600, color: '#059669' }}>
+                                                        {item.suggested_quantity}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                )}
+                            </div>
+
+                            {/* Modal Footer */}
+                            <div style={{
+                                padding: '16px 24px',
+                                borderTop: '1px solid #e5e7eb',
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'center',
+                                backgroundColor: '#f9fafb'
+                            }}>
+                                <div style={{ fontSize: '13px', color: '#6b7280' }}>
+                                    {smartPOSuggestions.length > 0 && (
+                                        <span>
+                                            Sẽ tạo {new Set(smartPOSuggestions.map(s => s.suggested_supplier_id).filter(Boolean)).size} đơn nhập hàng
+                                            theo các nhà cung cấp
+                                        </span>
+                                    )}
+                                </div>
+                                <div style={{ display: 'flex', gap: '12px' }}>
+                                    <button
+                                        onClick={() => setShowSmartPOModal(false)}
+                                        style={{
+                                            padding: '10px 20px',
+                                            border: '1px solid #d1d5db',
+                                            backgroundColor: 'white',
+                                            borderRadius: '8px',
+                                            cursor: 'pointer',
+                                            fontWeight: 500
+                                        }}
+                                    >
+                                        Đóng
+                                    </button>
+                                    <button
+                                        onClick={async () => {
+                                            const createdOrders = await createSmartPOs();
+                                            setShowSmartPOModal(false);
+                                            if (createdOrders.length > 0) {
+                                                alert(`Đã tạo ${createdOrders.length} đơn nhập hàng nháp. Vui lòng kiểm tra và xác nhận.`);
+                                                loadOrders(); // Refresh list
+                                            } else {
+                                                alert('Không có đơn hàng nào được tạo. Vui lòng kiểm tra dữ liệu NCC.');
+                                            }
+                                        }}
+                                        disabled={smartPOSuggestions.length === 0 || smartPOSuggestions.every(s => !s.suggested_supplier_id)}
+                                        style={{
+                                            padding: '10px 20px',
+                                            backgroundColor: smartPOSuggestions.length > 0 ? '#059669' : '#d1d5db',
+                                            color: 'white',
+                                            border: 'none',
+                                            borderRadius: '8px',
+                                            cursor: smartPOSuggestions.length > 0 ? 'pointer' : 'not-allowed',
+                                            fontWeight: 600,
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '8px'
+                                        }}
+                                    >
+                                        🧠 Tạo Đơn Nhập Tự Động
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
             </div>
         );
     }

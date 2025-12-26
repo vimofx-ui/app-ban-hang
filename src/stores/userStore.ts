@@ -381,8 +381,8 @@ export const useUserStore = create<UserState>()(
             hasPermission: (user, permission) => {
                 if (!user) return false;
 
-                // 1. Check if Admin (Legacy or via Role)
-                if (user.role === 'admin') return true;
+                // 1. Check if Admin/Owner (Legacy or via Role)
+                if (user.role === 'admin' || user.role === 'owner') return true;
 
                 // 2. Check Role-based permissions
                 const roles = get().roles;
