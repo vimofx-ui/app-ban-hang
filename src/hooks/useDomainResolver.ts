@@ -82,11 +82,11 @@ export function useDomainResolver() {
                 }
 
                 // Xử lý subdomain trên Vercel preview (vd: cafeabc-bangopos.vercel.app)
-                if (hostname.endsWith('.vercel.app')) {
-                    // Vercel preview URLs có format: project-name.vercel.app
-                    // Hoặc: branch-project-name.vercel.app
-                    // Tạm thời bỏ qua subdomain trên Vercel preview
-                    console.log('[DomainResolver] Vercel preview, skipping subdomain resolution');
+                // Hoặc Cloudflare Pages (vd: bango-pos.pages.dev)
+                if (hostname.endsWith('.vercel.app') || hostname.endsWith('.pages.dev')) {
+                    // Tạm thời bỏ qua subdomain trên các nền tảng này để tránh lỗi "Store not found"
+                    // khi user truy cập vào root domain của deployment
+                    console.log('[DomainResolver] Vercel/Cloudflare preview, skipping subdomain resolution');
                     setDomainInfo({
                         brandId: null,
                         brandSlug: null,

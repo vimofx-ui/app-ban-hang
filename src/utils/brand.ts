@@ -20,6 +20,9 @@ export function getBrandSlug(): string | null {
     const parts = host.split('.');
 
     // Standard domain: brand.bangopos.com -> parts length >= 3
+    // Cloudflare Pages: project.pages.dev -> treat as root
+    if (host.endsWith('.pages.dev') || host.endsWith('.vercel.app')) return null;
+
     if (parts.length < 3) return null; // Root domain
 
     return parts[0];
