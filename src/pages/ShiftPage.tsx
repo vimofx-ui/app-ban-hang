@@ -156,7 +156,7 @@ export function ShiftPage() {
 
     // Render Active Shift Dashboard
     if (currentShift) {
-        return <ActiveShiftDashboard shift={currentShift} onEndShift={() => window.location.href = '/reconciliation'} />;
+        return <ActiveShiftDashboard shift={currentShift} onEndShift={() => window.location.href = '/doi-soat'} />;
     }
 
     // Render Start Shift Wizard

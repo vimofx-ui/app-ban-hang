@@ -4,6 +4,7 @@
 
 import { create } from 'zustand';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
+import { useAuthStore } from '@/stores/authStore';
 
 import type { Order } from '@/types';
 
@@ -100,19 +101,28 @@ export const useReportStore = create<ReportState>((set, get) => ({
             let orders: any[] = [];
             let orderItems: any[] = [];
 
+            // Get current Branch
+            const branchId = useAuthStore.getState().branchId;
+
             // Check if Supabase is configured
             if (isSupabaseConfigured() && supabase) {
                 // SUPABASE MODE: Fetch from database
                 const startDateStr = startDate.toISOString();
                 const endDateStr = endDate.toISOString();
 
-                const { data: dbOrders, error: ordersError } = await supabase
+                let ordersQuery = supabase
                     .from('orders')
                     .select('*, customer:customers(*), order_items(*, product:products(*))')
                     .eq('status', 'completed')
                     .gte('created_at', startDateStr)
                     .lte('created_at', endDateStr)
                     .order('created_at', { ascending: false });
+
+                if (branchId) {
+                    ordersQuery = ordersQuery.eq('branch_id', branchId);
+                }
+
+                const { data: dbOrders, error: ordersError } = await ordersQuery;
 
                 if (ordersError) throw ordersError;
                 orders = dbOrders || [];
@@ -121,7 +131,7 @@ export const useReportStore = create<ReportState>((set, get) => ({
                 if (orderIds.length > 0) {
                     const { data: items, error: itemsError } = await supabase
                         .from('order_items')
-                        .select('*, products(name, cost_price)')
+                        .select('*, products(name, cost_price), cost_at_sale')
                         .in('order_id', orderIds);
 
                     if (itemsError) throw itemsError;
@@ -158,10 +168,6 @@ export const useReportStore = create<ReportState>((set, get) => ({
             // 3. Aggregate Daily Revenue
             const dailyMap = new Map<string, DailyRevenue>();
 
-            // Initialize all days in range with 0 (optional, but looks better on chart)
-            // For simplicity, we'll just map the unexpected data found. 
-            // In a pro version, we'd loop from startDate to endDate filling gaps.
-
             // Helper to get date key
             const getDateKey = (dateStr: string) => {
                 const d = new Date(dateStr);
@@ -190,10 +196,8 @@ export const useReportStore = create<ReportState>((set, get) => ({
                     const dateKey = getDateKey(order.created_at);
                     const current = dailyMap.get(dateKey);
                     if (current) {
-                        // Calculate profit = total_price - (quantity * cost_price)
-                        // Note: cost_price here is CURRENT cost. If cost changed, this is an estimate.
-                        // Ideally order_items should store 'cost_at_purchase'.
-                        const costPrice = item.products?.cost_price || 0;
+                        // Use historical cost if available (cost_at_sale), else fallback to current base cost
+                        const costPrice = item.cost_at_sale || item.products?.cost_price || 0;
                         const itemProfit = (item.total_price || 0) - ((item.quantity || 0) * costPrice);
 
                         current.profit += itemProfit;
@@ -204,9 +208,6 @@ export const useReportStore = create<ReportState>((set, get) => ({
 
 
             const dailyRevenue = Array.from(dailyMap.values()).sort((a, b) => {
-                // naive sort by date string, strictly might differ by locale format
-                // but usually works for simple charts. 
-                // Better: keep a timestamp in DailyRevenue for sorting
                 return a.date.localeCompare(b.date);
             });
 
@@ -237,13 +238,19 @@ export const useReportStore = create<ReportState>((set, get) => ({
             // 5. Fetch Operating Expenses (Cash Flow)
             let operatingExpenses = 0;
             if (isSupabaseConfigured() && supabase) {
-                const { data: txs, error: txError } = await supabase
+                let txQuery = supabase
                     .from('transactions')
                     .select('amount')
                     .eq('type', 'expense')
                     .eq('is_accounting', true)
                     .gte('transaction_date', startDate.toISOString())
                     .lte('transaction_date', endDate.toISOString());
+
+                if (branchId) {
+                    txQuery = txQuery.eq('branch_id', branchId);
+                }
+
+                const { data: txs, error: txError } = await txQuery;
 
                 if (!txError && txs) {
                     operatingExpenses = txs.reduce((sum, t) => sum + t.amount, 0);

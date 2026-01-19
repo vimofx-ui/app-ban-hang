@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils';
 import type { Customer, Order, TransactionType } from '@/types';
 import { OrderDetailsModal } from '@/components/orders/OrderDetailsModal';
 import { CreateTransactionModal } from '@/components/cash/CreateTransactionModal';
+import { PointsHistoryModal } from '@/components/customers/PointsHistoryModal';
 import { useCustomerStore } from '@/stores/customerStore';
 
 interface CustomerDetailsViewProps {
@@ -26,6 +27,7 @@ export function CustomerDetailsView({ customer, onBack, onEdit, onDelete }: Cust
     });
     const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
     const [showPaymentModal, setShowPaymentModal] = useState(false);
+    const [showPointsModal, setShowPointsModal] = useState(false);
     const [paymentTargetOrder, setPaymentTargetOrder] = useState<Order | undefined>(undefined);
     const [refreshKey, setRefreshKey] = useState(0); // Force re-render after updates
 
@@ -110,15 +112,29 @@ export function CustomerDetailsView({ customer, onBack, onEdit, onDelete }: Cust
 
                 setOrders(allOrders);
 
-                // Calculate Stats (only if we fetched real orders, otherwise use Customer stats)
+                // Calculate Stats
                 if (allOrders.length > 0) {
                     const lastOrder = allOrders[0];
-                    // ... update stats state if needed, but we rely on Customer props for the summary cards mostly
-                    // We can update lastPurchaseDate
-                    setStats(prev => ({
-                        ...prev,
-                        lastPurchaseDate: new Date(lastOrder.created_at).toLocaleDateString('vi-VN')
-                    }));
+
+                    // Tính tổng SL sản phẩm đã mua từ order_items
+                    let totalItems = 0;
+                    let totalReturns = 0;
+                    allOrders.forEach(order => {
+                        if (order.order_items && Array.isArray(order.order_items)) {
+                            order.order_items.forEach((item: any) => {
+                                totalItems += (item.quantity || 0);
+                            });
+                        }
+                        if (order.status === 'returned') {
+                            totalReturns += 1;
+                        }
+                    });
+
+                    setStats({
+                        lastPurchaseDate: new Date(lastOrder.created_at).toLocaleDateString('vi-VN'),
+                        totalItemsPurchased: totalItems,
+                        totalReturns: totalReturns
+                    });
                 }
 
             } catch (err) {
@@ -237,9 +253,9 @@ export function CustomerDetailsView({ customer, onBack, onEdit, onDelete }: Cust
                             <button onClick={() => onEdit(customer)} className="text-blue-600 text-sm font-medium hover:underline">Cập nhật</button>
                         </div>
                         <div className="grid grid-cols-2 gap-x-8 gap-y-3 text-sm">
-                            <InfoRow label="Ngày sinh" value="---" />
+                            <InfoRow label="Ngày sinh" value={customer.date_of_birth ? new Date(customer.date_of_birth).toLocaleDateString('vi-VN') : '---'} />
                             <InfoRow label="Nhóm khách hàng" value="Bán lẻ" cssValue="text-blue-600 font-medium" />
-                            <InfoRow label="Giới tính" value="---" />
+                            <InfoRow label="Giới tính" value={customer.gender === 'male' ? 'Nam' : customer.gender === 'female' ? 'Nữ' : '---'} />
                             <InfoRow label="Mã khách hàng" value={customer.code || '---'} />
                             <InfoRow label="Số điện thoại" value={customer.phone || '---'} />
                             <InfoRow label="Mã số thuế" value="---" />
@@ -259,12 +275,12 @@ export function CustomerDetailsView({ customer, onBack, onEdit, onDelete }: Cust
                                 <button className="text-blue-600 text-sm font-medium hover:underline">Chi tiết</button>
                             </div>
                             <div className="grid grid-cols-2 gap-x-8 gap-y-3 text-sm">
-                                <InfoRow label="Tổng chi tiêu" value={formatVND(customer.total_spent)} cssValue="font-bold text-gray-900" />
+                                <InfoRow label="Tổng chi tiêu" value={formatVND(customer.total_spent || 0)} cssValue="font-bold text-gray-900" />
                                 <InfoRow label="Tổng SL sản phẩm đã mua" value={stats.totalItemsPurchased.toString()} />
-                                <InfoRow label="Tổng SL đơn hàng" value={customer.total_orders.toString()} />
+                                <InfoRow label="Tổng SL đơn hàng" value={(customer.total_orders || 0).toString()} />
                                 <InfoRow label="Tổng SL sản phẩm hoàn trả" value={stats.totalReturns.toString()} />
                                 <InfoRow label="Ngày cuối cùng mua hàng" value={stats.lastPurchaseDate} />
-                                <InfoRow label="Công nợ hiện tại" value={formatVND(customer.debt_balance)} cssValue="font-bold text-red-600" />
+                                <InfoRow label="Công nợ hiện tại" value={formatVND(customer.debt_balance || 0)} cssValue="font-bold text-red-600" />
                             </div>
                         </div>
 
@@ -272,10 +288,15 @@ export function CustomerDetailsView({ customer, onBack, onEdit, onDelete }: Cust
                         <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
                             <div className="flex justify-between items-center mb-4">
                                 <h3 className="font-bold text-gray-800">Thông tin tích điểm</h3>
-                                <button className="text-blue-600 text-sm font-medium hover:underline">Chi tiết</button>
+                                <button
+                                    onClick={() => setShowPointsModal(true)}
+                                    className="text-blue-600 text-sm font-medium hover:underline"
+                                >
+                                    Chi tiết
+                                </button>
                             </div>
                             <div className="text-sm space-y-3">
-                                <InfoRow label="Điểm hiện tại" value={customer.points_balance.toString()} cssValue="font-bold text-green-600" />
+                                <InfoRow label="Điểm hiện tại" value={(customer.points_balance || 0).toString()} cssValue="font-bold text-green-600" />
                                 <InfoRow label="Hạng thẻ hiện tại" value="Thành viên" />
                             </div>
                         </div>
@@ -366,6 +387,12 @@ export function CustomerDetailsView({ customer, onBack, onEdit, onDelete }: Cust
                 referenceId={paymentTargetOrder?.id}
                 referenceType={paymentTargetOrder ? 'order' : undefined}
                 onSuccess={handlePaymentSuccess}
+            />
+
+            <PointsHistoryModal
+                customer={customer}
+                isOpen={showPointsModal}
+                onClose={() => setShowPointsModal(false)}
             />
         </div>
     );

@@ -62,9 +62,9 @@ export async function syncOrderToServer(order: OfflineOrder): Promise<boolean> {
                 product_id: item.product_id,
                 product_name: item.name,
                 quantity: item.quantity,
-                unit_price: item.price,
+                unit_price: item.unit_price || item.price || 0,
                 discount: item.discount || 0,
-                total: item.quantity * item.price - (item.discount || 0),
+                total: item.total || (item.quantity * (item.unit_price || item.price || 0) - (item.discount || 0)),
             }));
 
             const { error: itemsError } = await supabase
@@ -104,12 +104,11 @@ export async function syncOrderToServer(order: OfflineOrder): Promise<boolean> {
 // HELPER: Create order for POS (handles online/offline)
 // =============================================================================
 
-import { useOfflineOrders } from '@/hooks/useOfflineOrders';
+import { useOfflineOrders, useNetworkStatus } from '@/hooks/useOfflineOrders';
 
 export function usePOSOrderCreator() {
-    const { saveOfflineOrder, markSynced, isOnline } = useOfflineOrders();
-    // Note: In actual implementation, get brand/branch from auth context or props
-    // const currentBranch = useBranchStore(state => state.getCurrentBranch());
+    const { saveOfflineOrder, markSynced } = useOfflineOrders();
+    const { isOnline } = useNetworkStatus();
     const branchStore = useBranchStore.getState();
     const brandStore = useBrandStore.getState();
     const currentBranch = branchStore.getCurrentBranch();

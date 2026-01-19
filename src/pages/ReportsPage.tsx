@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useReportStore } from '@/stores/reportStore';
+import { useStockTransferStore } from '@/stores/stockTransferStore';
 import { formatVND } from '@/lib/cashReconciliation';
 import { cn } from '@/lib/utils';
 import {
-    AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend
+    AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend
 } from 'recharts';
 import { useUserStore } from '@/stores/userStore';
 import { useAuthStore } from '@/stores/authStore';
@@ -57,13 +58,41 @@ export function ReportsPage() {
         loading, fetchReports, dateRange, setDateRange
     } = useReportStore();
 
-    const [activeTab, setActiveTab] = useState<'dashboard' | 'profit' | 'inventory' | 'payment'>('dashboard');
+    const [activeTab, setActiveTab] = useState<'dashboard' | 'profit' | 'inventory' | 'payment' | 'transfer'>('dashboard');
     const [customFrom, setCustomFrom] = useState('');
     const [customTo, setCustomTo] = useState('');
     const [paymentMethodFilter, setPaymentMethodFilter] = useState<'all' | 'cash' | 'transfer' | 'card' | 'debt' | 'points'>('all');
 
-    const { user: authUser } = useAuthStore();
+    const { user: authUser, brandId } = useAuthStore();
     const hasPermission = useUserStore(s => s.hasPermission);
+    const { transfers, fetchTransfers } = useStockTransferStore();
+
+    // Transfer statistics
+    const transferStats = useMemo(() => {
+        const now = new Date();
+        const thisMonth = transfers.filter(t => {
+            const d = new Date(t.created_at);
+            return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+        });
+
+        return {
+            total: transfers.length,
+            pending: transfers.filter(t => t.status === 'pending').length,
+            inTransit: transfers.filter(t => t.status === 'in_transit').length,
+            completed: transfers.filter(t => t.status === 'completed').length,
+            cancelled: transfers.filter(t => t.status === 'cancelled').length,
+            thisMonth: thisMonth.length,
+            completedThisMonth: thisMonth.filter(t => t.status === 'completed').length,
+        };
+    }, [transfers]);
+
+    // Transfer chart data
+    const transferChartData = useMemo(() => [
+        { name: 'Chờ xuất', value: transferStats.pending, color: '#f59e0b' },
+        { name: 'Đang chuyển', value: transferStats.inTransit, color: '#3b82f6' },
+        { name: 'Hoàn thành', value: transferStats.completed, color: '#10b981' },
+        { name: 'Đã hủy', value: transferStats.cancelled, color: '#6b7280' },
+    ], [transferStats]);
 
     if (!hasPermission(authUser as any, 'report_sales')) {
         return (
@@ -83,8 +112,11 @@ export function ReportsPage() {
 
     useEffect(() => {
         fetchReports(dateRange);
+        if (brandId) {
+            fetchTransfers(brandId);
+        }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [dateRange]);
+    }, [dateRange, brandId]);
 
     const handleExport = () => {
         const filename = `report-${dateRange}-${new Date().toISOString().split('T')[0]}.csv`;
@@ -152,6 +184,15 @@ export function ReportsPage() {
                             )}
                         >
                             💳 Thanh toán
+                        </button>
+                        <button
+                            onClick={() => setActiveTab('transfer')}
+                            className={cn(
+                                "px-4 py-2 rounded-lg text-sm font-medium transition-all",
+                                activeTab === 'transfer' ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"
+                            )}
+                        >
+                            🔄 Chuyển kho
                         </button>
                     </div>
 
@@ -396,39 +437,71 @@ export function ReportsPage() {
                             {/* Inventory Table */}
                             <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
                                 <h3 className="text-lg font-bold text-gray-900 mb-4">Tồn kho theo sản phẩm</h3>
-                                <div className="overflow-x-auto">
-                                    <table className="w-full text-sm">
-                                        <thead>
-                                            <tr className="border-b border-gray-200">
-                                                <th className="text-left py-3 px-4 font-medium text-gray-500">Sản phẩm</th>
-                                                <th className="text-right py-3 px-4 font-medium text-gray-500">Tồn kho</th>
-                                                <th className="text-right py-3 px-4 font-medium text-gray-500">Giá vốn</th>
-                                                <th className="text-right py-3 px-4 font-medium text-gray-500">Giá trị</th>
-                                                <th className="text-center py-3 px-4 font-medium text-gray-500">Trạng thái</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {topProducts.slice(0, 10).map((p, idx) => (
-                                                <tr key={p.id || idx} className="border-b border-gray-100 hover:bg-gray-50">
-                                                    <td className="py-3 px-4 font-medium">{p.name}</td>
-                                                    <td className="py-3 px-4 text-right">{p.quantity || '--'}</td>
-                                                    <td className="py-3 px-4 text-right">{formatVND(p.revenue / (p.quantity || 1))}</td>
-                                                    <td className="py-3 px-4 text-right font-medium">{formatVND(p.revenue)}</td>
-                                                    <td className="py-3 px-4 text-center">
-                                                        <span className={cn(
-                                                            "px-2 py-1 rounded-full text-xs font-medium",
-                                                            (p.quantity || 0) > 10 ? "bg-green-100 text-green-700" :
-                                                                (p.quantity || 0) > 0 ? "bg-yellow-100 text-yellow-700" :
-                                                                    "bg-red-100 text-red-700"
-                                                        )}>
-                                                            {(p.quantity || 0) > 10 ? 'Còn hàng' : (p.quantity || 0) > 0 ? 'Sắp hết' : 'Hết hàng'}
-                                                        </span>
-                                                    </td>
+                                <>
+                                    {/* Mobile Cards */}
+                                    <div className="md:hidden space-y-3">
+                                        {topProducts.slice(0, 10).map((p, idx) => (
+                                            <div key={p.id || idx} className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm space-y-2">
+                                                <div className="flex items-start justify-between">
+                                                    <div className="font-medium text-gray-900 line-clamp-2 pr-2">{p.name}</div>
+                                                    <span className={cn(
+                                                        "px-2 py-1 rounded-full text-xs font-medium shrink-0",
+                                                        (p.quantity || 0) > 10 ? "bg-green-100 text-green-700" :
+                                                            (p.quantity || 0) > 0 ? "bg-yellow-100 text-yellow-700" :
+                                                                "bg-red-100 text-red-700"
+                                                    )}>
+                                                        {(p.quantity || 0) > 10 ? 'Còn hàng' : (p.quantity || 0) > 0 ? 'Sắp hết' : 'Hết hàng'}
+                                                    </span>
+                                                </div>
+                                                <div className="grid grid-cols-2 gap-2 text-sm pt-2 border-t border-gray-50">
+                                                    <div>
+                                                        <div className="text-gray-500 text-xs text-center">Tồn kho</div>
+                                                        <div className="font-medium text-center">{p.quantity || '--'}</div>
+                                                    </div>
+                                                    <div>
+                                                        <div className="text-gray-500 text-xs text-center">Giá trị</div>
+                                                        <div className="font-medium text-center">{formatVND(p.revenue)}</div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+
+                                    {/* Desktop Table */}
+                                    <div className="overflow-x-auto hidden md:block">
+                                        <table className="w-full text-sm">
+                                            <thead>
+                                                <tr className="border-b border-gray-200">
+                                                    <th className="text-left py-3 px-4 font-medium text-gray-500">Sản phẩm</th>
+                                                    <th className="text-right py-3 px-4 font-medium text-gray-500">Tồn kho</th>
+                                                    <th className="text-right py-3 px-4 font-medium text-gray-500">Giá vốn</th>
+                                                    <th className="text-right py-3 px-4 font-medium text-gray-500">Giá trị</th>
+                                                    <th className="text-center py-3 px-4 font-medium text-gray-500">Trạng thái</th>
                                                 </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-                                </div>
+                                            </thead>
+                                            <tbody>
+                                                {topProducts.slice(0, 10).map((p, idx) => (
+                                                    <tr key={p.id || idx} className="border-b border-gray-100 hover:bg-gray-50">
+                                                        <td className="py-3 px-4 font-medium">{p.name}</td>
+                                                        <td className="py-3 px-4 text-right">{p.quantity || '--'}</td>
+                                                        <td className="py-3 px-4 text-right">{formatVND(p.revenue / (p.quantity || 1))}</td>
+                                                        <td className="py-3 px-4 text-right font-medium">{formatVND(p.revenue)}</td>
+                                                        <td className="py-3 px-4 text-center">
+                                                            <span className={cn(
+                                                                "px-2 py-1 rounded-full text-xs font-medium",
+                                                                (p.quantity || 0) > 10 ? "bg-green-100 text-green-700" :
+                                                                    (p.quantity || 0) > 0 ? "bg-yellow-100 text-yellow-700" :
+                                                                        "bg-red-100 text-red-700"
+                                                            )}>
+                                                                {(p.quantity || 0) > 10 ? 'Còn hàng' : (p.quantity || 0) > 0 ? 'Sắp hết' : 'Hết hàng'}
+                                                            </span>
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </>
                             </div>
                         </>
                     ) : activeTab === 'payment' ? (
@@ -546,6 +619,214 @@ export function ReportsPage() {
                                         </span>
                                     </div>
                                 </div>
+                            </div>
+                        </>
+                    ) : activeTab === 'transfer' ? (
+                        <>
+                            {/* Transfer Header with Export */}
+                            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
+                                <div>
+                                    <h3 className="text-lg font-bold text-gray-900">📦 Báo cáo chuyển kho</h3>
+                                    <p className="text-sm text-gray-500">Thống kê phiếu chuyển kho giữa các chi nhánh</p>
+                                </div>
+                                <button
+                                    onClick={() => {
+                                        const dataToExport = transfers.map(t => ({
+                                            'Mã phiếu': t.transfer_code,
+                                            'Từ chi nhánh': t.from_branch?.name || '',
+                                            'Đến chi nhánh': t.to_branch?.name || '',
+                                            'Trạng thái': t.status === 'pending' ? 'Chờ xuất' :
+                                                t.status === 'in_transit' ? 'Đang chuyển' :
+                                                    t.status === 'completed' ? 'Hoàn thành' : 'Đã hủy',
+                                            'Ngày tạo': new Date(t.created_at).toLocaleDateString('vi-VN'),
+                                            'Số SP': t.items?.length || 0,
+                                        }));
+                                        const headers = Object.keys(dataToExport[0] || {});
+                                        const csvContent = [
+                                            headers.join(','),
+                                            ...dataToExport.map(row => headers.map(h => `"${(row as any)[h]}"`).join(','))
+                                        ].join('\n');
+                                        const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+                                        const link = document.createElement('a');
+                                        link.href = URL.createObjectURL(blob);
+                                        link.download = `bao-cao-chuyen-kho-${new Date().toISOString().split('T')[0]}.csv`;
+                                        link.click();
+                                    }}
+                                    disabled={transfers.length === 0}
+                                    className="px-4 py-2 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm flex items-center gap-2"
+                                >
+                                    📥 Xuất CSV ({transfers.length} phiếu)
+                                </button>
+                            </div>
+
+                            {/* Transfer Stats Cards */}
+                            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+                                <div className="bg-white p-4 md:p-6 rounded-2xl border border-gray-100 shadow-sm">
+                                    <p className="text-xs md:text-sm font-medium text-gray-500 mb-2">Tổng phiếu</p>
+                                    <h3 className="text-xl md:text-2xl font-bold text-gray-900">{transferStats.total}</h3>
+                                </div>
+                                <div className="bg-white p-4 md:p-6 rounded-2xl border border-amber-200 shadow-sm bg-amber-50">
+                                    <p className="text-xs md:text-sm font-medium text-amber-600 mb-2">📝 Chờ xuất</p>
+                                    <h3 className="text-xl md:text-2xl font-bold text-amber-600">{transferStats.pending}</h3>
+                                </div>
+                                <div className="bg-white p-4 md:p-6 rounded-2xl border border-blue-200 shadow-sm bg-blue-50">
+                                    <p className="text-xs md:text-sm font-medium text-blue-600 mb-2">🚚 Đang chuyển</p>
+                                    <h3 className="text-xl md:text-2xl font-bold text-blue-600">{transferStats.inTransit}</h3>
+                                </div>
+                                <div className="bg-white p-4 md:p-6 rounded-2xl border border-green-200 shadow-sm bg-green-50">
+                                    <p className="text-xs md:text-sm font-medium text-green-600 mb-2">✅ Hoàn thành</p>
+                                    <h3 className="text-xl md:text-2xl font-bold text-green-600">{transferStats.completed}</h3>
+                                </div>
+                                <div className="bg-white p-4 md:p-6 rounded-2xl border border-gray-200 shadow-sm col-span-2 md:col-span-1">
+                                    <p className="text-xs md:text-sm font-medium text-gray-500 mb-2">❌ Đã hủy</p>
+                                    <h3 className="text-xl md:text-2xl font-bold text-gray-500">{transferStats.cancelled}</h3>
+                                </div>
+                            </div>
+
+                            {/* Charts Section */}
+                            <div className="grid lg:grid-cols-2 gap-6">
+                                {/* Pie Chart */}
+                                <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
+                                    <h3 className="text-lg font-bold text-gray-900 mb-4">Phân bố theo trạng thái</h3>
+                                    <ResponsiveContainer width="100%" height={300}>
+                                        <PieChart>
+                                            <Pie
+                                                data={transferChartData}
+                                                cx="50%"
+                                                cy="50%"
+                                                innerRadius={60}
+                                                outerRadius={100}
+                                                paddingAngle={2}
+                                                dataKey="value"
+                                                label={({ name, value }) => `${name}: ${value}`}
+                                            >
+                                                {transferChartData.map((entry, index) => (
+                                                    <Cell key={`cell-${index}`} fill={entry.color} />
+                                                ))}
+                                            </Pie>
+                                            <Tooltip formatter={(value: number) => `${value} phiếu`} />
+                                            <Legend />
+                                        </PieChart>
+                                    </ResponsiveContainer>
+                                </div>
+
+                                {/* Summary Cards */}
+                                <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
+                                    <h3 className="text-lg font-bold text-gray-900 mb-4">Thống kê tháng này</h3>
+                                    <div className="space-y-4">
+                                        <div className="flex justify-between items-center p-4 bg-gray-50 rounded-xl">
+                                            <span className="text-gray-600">Tổng phiếu tạo trong tháng</span>
+                                            <span className="text-2xl font-bold text-gray-900">{transferStats.thisMonth}</span>
+                                        </div>
+                                        <div className="flex justify-between items-center p-4 bg-green-50 rounded-xl">
+                                            <span className="text-green-700">Đã hoàn thành trong tháng</span>
+                                            <span className="text-2xl font-bold text-green-600">{transferStats.completedThisMonth}</span>
+                                        </div>
+                                        <div className="flex justify-between items-center p-4 bg-blue-50 rounded-xl">
+                                            <span className="text-blue-700">Tỷ lệ hoàn thành</span>
+                                            <span className="text-2xl font-bold text-blue-600">
+                                                {transferStats.total > 0
+                                                    ? Math.round((transferStats.completed / transferStats.total) * 100)
+                                                    : 0}%
+                                            </span>
+                                        </div>
+                                        <div className="flex justify-between items-center p-4 bg-amber-50 rounded-xl">
+                                            <span className="text-amber-700">Đang chờ xử lý</span>
+                                            <span className="text-2xl font-bold text-amber-600">
+                                                {transferStats.pending + transferStats.inTransit}
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Recent Transfers List */}
+                            <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
+                                <div className="flex justify-between items-center mb-4">
+                                    <h3 className="text-lg font-bold text-gray-900">Phiếu chuyển kho gần đây</h3>
+                                    <a href="/ton-kho" className="text-sm text-primary hover:underline">
+                                        Xem tất cả →
+                                    </a>
+                                </div>
+                                {transfers.length === 0 ? (
+                                    <div className="text-center py-8 text-gray-500">Chưa có phiếu chuyển kho nào</div>
+                                ) : (
+                                    <>
+                                        {/* Mobile Cards */}
+                                        <div className="md:hidden space-y-3">
+                                            {transfers.slice(0, 10).map((t) => (
+                                                <div key={t.id} className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm space-y-2">
+                                                    <div className="flex justify-between items-start">
+                                                        <div>
+                                                            <div className="font-medium text-primary">{t.transfer_code}</div>
+                                                            <div className="text-xs text-gray-500">{new Date(t.created_at).toLocaleDateString('vi-VN')}</div>
+                                                        </div>
+                                                        <span className={cn(
+                                                            "px-2 py-1 rounded-full text-xs font-medium",
+                                                            t.status === 'pending' && "bg-amber-100 text-amber-700",
+                                                            t.status === 'in_transit' && "bg-blue-100 text-blue-700",
+                                                            t.status === 'completed' && "bg-green-100 text-green-700",
+                                                            t.status === 'cancelled' && "bg-gray-100 text-gray-500"
+                                                        )}>
+                                                            {t.status === 'pending' && 'Chờ xuất'}
+                                                            {t.status === 'in_transit' && 'Đang chuyển'}
+                                                            {t.status === 'completed' && 'Hoàn thành'}
+                                                            {t.status === 'cancelled' && 'Đã hủy'}
+                                                        </span>
+                                                    </div>
+                                                    <div className="flex items-center gap-2 text-sm pt-2 border-t border-gray-50">
+                                                        <span className="text-gray-600 truncate max-w-[40%]">{t.from_branch?.name}</span>
+                                                        <span className="text-gray-400">→</span>
+                                                        <span className="font-medium truncate max-w-[40%]">{t.to_branch?.name}</span>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+
+                                        {/* Desktop Table */}
+                                        <div className="overflow-x-auto hidden md:block">
+                                            <table className="w-full text-sm">
+                                                <thead>
+                                                    <tr className="border-b border-gray-200">
+                                                        <th className="text-left py-3 px-4 font-medium text-gray-500">Mã phiếu</th>
+                                                        <th className="text-left py-3 px-4 font-medium text-gray-500 hidden md:table-cell">Từ → Đến</th>
+                                                        <th className="text-left py-3 px-4 font-medium text-gray-500 hidden sm:table-cell">Ngày tạo</th>
+                                                        <th className="text-center py-3 px-4 font-medium text-gray-500">Trạng thái</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {transfers.slice(0, 10).map((t) => (
+                                                        <tr key={t.id} className="border-b border-gray-100 hover:bg-gray-50">
+                                                            <td className="py-3 px-4 font-medium text-primary">{t.transfer_code}</td>
+                                                            <td className="py-3 px-4 hidden md:table-cell">
+                                                                <span className="text-gray-600">{t.from_branch?.name}</span>
+                                                                <span className="mx-2 text-gray-400">→</span>
+                                                                <span className="font-medium">{t.to_branch?.name}</span>
+                                                            </td>
+                                                            <td className="py-3 px-4 text-gray-600 hidden sm:table-cell">
+                                                                {new Date(t.created_at).toLocaleDateString('vi-VN')}
+                                                            </td>
+                                                            <td className="py-3 px-4 text-center">
+                                                                <span className={cn(
+                                                                    "px-2 py-1 rounded-full text-xs font-medium",
+                                                                    t.status === 'pending' && "bg-amber-100 text-amber-700",
+                                                                    t.status === 'in_transit' && "bg-blue-100 text-blue-700",
+                                                                    t.status === 'completed' && "bg-green-100 text-green-700",
+                                                                    t.status === 'cancelled' && "bg-gray-100 text-gray-500"
+                                                                )}>
+                                                                    {t.status === 'pending' && '📝 Chờ xuất'}
+                                                                    {t.status === 'in_transit' && '🚚 Đang chuyển'}
+                                                                    {t.status === 'completed' && '✅ Hoàn thành'}
+                                                                    {t.status === 'cancelled' && '❌ Đã hủy'}
+                                                                </span>
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </>
+                                )}
                             </div>
                         </>
                     ) : null}

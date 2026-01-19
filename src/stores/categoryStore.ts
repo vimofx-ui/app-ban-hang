@@ -32,8 +32,8 @@ interface CategoryState {
     getOrCreateNoBarcodeCategory: () => Category;
 }
 
-// Static ID for "Không mã" category
-export const NO_BARCODE_CATEGORY_ID = 'no-barcode-category';
+// Static ID for "Không mã" category - MUST be a valid UUID for database compatibility
+export const NO_BARCODE_CATEGORY_ID = '00000000-0000-0000-0000-000000000001';
 
 const generateId = () => `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 

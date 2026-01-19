@@ -4,10 +4,11 @@
 
 import { useState, useEffect } from 'react';
 import { useCustomerStore } from '@/stores/customerStore';
-import { useSupplierStore } from '@/stores/supplierStore';
+import { useSupplierStore, type Supplier } from '@/stores/supplierStore';
 import { useDebtStore } from '@/stores/debtStore';
 import { useOrderStore } from '@/stores/orderStore';
-import type { Customer, Supplier, DebtPayment, Order } from '@/types';
+import type { Customer, DebtPayment, Order } from '@/types';
+import { toast } from 'sonner';
 
 // Format currency
 const formatVND = (amount: number) => new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(amount);
@@ -25,6 +26,8 @@ export function DebtManagementPage() {
     const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
     const [selectedSupplier, setSelectedSupplier] = useState<Supplier | null>(null);
     const [showPaymentModal, setShowPaymentModal] = useState(false);
+    const [showDebtDetailModal, setShowDebtDetailModal] = useState(false);
+    const [detailCustomer, setDetailCustomer] = useState<Customer | null>(null);
     const [paymentAmount, setPaymentAmount] = useState('');
     const [paymentMethod, setPaymentMethod] = useState<'cash' | 'transfer'>('cash');
     const [paymentNotes, setPaymentNotes] = useState('');
@@ -57,6 +60,37 @@ export function DebtManagementPage() {
         if (amount <= 0) return;
 
         // Add payment record
+        // FIFO Logic: Distribute payment to oldest unpaid orders
+        let remaining = amount;
+        const unpaidOrders = orders
+            .filter(o => o.customer_id === selectedCustomer.id && o.debt_amount > 0 && (o.remaining_debt === undefined || o.remaining_debt > 0))
+            .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+
+        const paidOrdersList: string[] = [];
+        const orderStore = useOrderStore.getState();
+
+        for (const order of unpaidOrders) {
+            if (remaining <= 0) break;
+
+            const currentDebt = order.remaining_debt ?? order.debt_amount;
+            const payForThis = Math.min(remaining, currentDebt);
+
+            const newPaid = (order.paid_amount || 0) + payForThis;
+            const newRemaining = currentDebt - payForThis;
+
+            // Update Order
+            await orderStore.updateOrder(order.id, {
+                paid_amount: newPaid,
+                remaining_debt: newRemaining,
+                payment_status: newRemaining <= 0 ? 'paid' : 'partially_paid',
+                paid_at: newRemaining <= 0 ? new Date().toISOString() : undefined
+            });
+
+            remaining -= payForThis;
+            paidOrdersList.push(`${order.order_number}`);
+        }
+
+        // Add payment record
         addPayment({
             payment_type: 'customer',
             customer_id: selectedCustomer.id,
@@ -64,7 +98,7 @@ export function DebtManagementPage() {
             payment_method: paymentMethod,
             debt_before: selectedCustomer.debt_balance,
             debt_after: Math.max(0, selectedCustomer.debt_balance - amount),
-            notes: paymentNotes,
+            notes: paymentNotes || `Thanh toán cho các đơn: ${paidOrdersList.join(', ')}`,
         });
 
         // Update customer debt
@@ -75,6 +109,7 @@ export function DebtManagementPage() {
         setPaymentAmount('');
         setPaymentNotes('');
         setSelectedCustomer(null);
+        toast.success(`Đã thu ${formatVND(amount)} từ ${selectedCustomer.name}`);
     };
 
     // Handle payment submission for supplier
@@ -113,7 +148,7 @@ export function DebtManagementPage() {
             </header>
 
             {/* Summary Cards */}
-            <div style={{ padding: '24px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+            <div className="p-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div style={{
                     backgroundColor: 'white',
                     padding: '20px',
@@ -185,103 +220,127 @@ export function DebtManagementPage() {
             {/* Content */}
             <div style={{ padding: '0 24px 24px' }}>
                 {activeTab === 'customer' ? (
-                    <div style={{ backgroundColor: 'white', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
                         {customersWithDebt.length === 0 ? (
-                            <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af' }}>
-                                <div style={{ fontSize: '48px', marginBottom: '12px' }}>✅</div>
+                            <div className="p-12 text-center text-gray-400">
+                                <div className="text-5xl mb-3">✅</div>
                                 <div>Không có khách hàng nào còn nợ</div>
                             </div>
                         ) : (
-                            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                                <thead>
-                                    <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                        <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, color: '#6b7280' }}>Khách hàng</th>
-                                        <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, color: '#6b7280' }}>SĐT</th>
-                                        <th style={{ padding: '12px 16px', textAlign: 'right', fontWeight: 600, color: '#6b7280' }}>Công nợ</th>
-                                        <th style={{ padding: '12px 16px', textAlign: 'center', fontWeight: 600, color: '#6b7280' }}>Thao tác</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
+                            <>
+                                {/* Mobile Cards */}
+                                <div className="md:hidden divide-y divide-gray-100">
                                     {customersWithDebt.map(customer => (
-                                        <tr key={customer.id} style={{ borderBottom: '1px solid #e5e7eb' }}>
-                                            <td style={{ padding: '12px 16px', fontWeight: 500 }}>{customer.name}</td>
-                                            <td style={{ padding: '12px 16px', color: '#6b7280' }}>{customer.phone || '---'}</td>
-                                            <td style={{ padding: '12px 16px', textAlign: 'right', fontWeight: 600, color: '#ef4444' }}>
-                                                {formatVND(customer.debt_balance)}
-                                            </td>
-                                            <td style={{ padding: '12px 16px', textAlign: 'center' }}>
+                                        <div key={customer.id} className="p-4">
+                                            <div className="flex justify-between items-start mb-2">
+                                                <div>
+                                                    <div className="font-medium text-gray-900">{customer.name}</div>
+                                                    <div className="text-sm text-gray-500">{customer.phone || '---'}</div>
+                                                </div>
+                                                <span className="font-bold text-red-500">{formatVND(customer.debt_balance)}</span>
+                                            </div>
+                                            <div className="flex gap-2 mt-2">
                                                 <button
-                                                    onClick={() => {
-                                                        setSelectedCustomer(customer);
-                                                        setShowPaymentModal(true);
-                                                    }}
-                                                    style={{
-                                                        padding: '8px 16px',
-                                                        borderRadius: '6px',
-                                                        border: 'none',
-                                                        backgroundColor: '#22c55e',
-                                                        color: 'white',
-                                                        fontWeight: 600,
-                                                        cursor: 'pointer'
-                                                    }}
-                                                >
-                                                    💵 Thu tiền
-                                                </button>
-                                            </td>
-                                        </tr>
+                                                    onClick={() => { setDetailCustomer(customer); setShowDebtDetailModal(true); }}
+                                                    className="flex-1 py-2 bg-blue-100 text-blue-700 rounded-lg font-medium text-sm"
+                                                >📋 Chi tiết</button>
+                                                <button
+                                                    onClick={() => { setSelectedCustomer(customer); setShowPaymentModal(true); }}
+                                                    className="flex-1 py-2 bg-green-600 text-white rounded-lg font-medium text-sm"
+                                                >💵 Thu tiền</button>
+                                            </div>
+                                        </div>
                                     ))}
-                                </tbody>
-                            </table>
+                                </div>
+                                {/* Desktop Table */}
+                                <table className="hidden md:table w-full">
+                                    <thead className="bg-gray-50 border-b">
+                                        <tr>
+                                            <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600">Khách hàng</th>
+                                            <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600">SĐT</th>
+                                            <th className="px-4 py-3 text-right text-sm font-semibold text-gray-600">Công nợ</th>
+                                            <th className="px-4 py-3 text-center text-sm font-semibold text-gray-600">Thao tác</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y">
+                                        {customersWithDebt.map(customer => (
+                                            <tr key={customer.id} className="hover:bg-gray-50">
+                                                <td className="px-4 py-3 font-medium">{customer.name}</td>
+                                                <td className="px-4 py-3 text-gray-600">{customer.phone || '---'}</td>
+                                                <td className="px-4 py-3 text-right font-bold text-red-500">{formatVND(customer.debt_balance)}</td>
+                                                <td className="px-4 py-3 text-center">
+                                                    <div className="flex gap-2 justify-center">
+                                                        <button
+                                                            onClick={() => { setDetailCustomer(customer); setShowDebtDetailModal(true); }}
+                                                            className="px-3 py-2 bg-blue-100 text-blue-700 rounded-lg font-medium text-sm hover:bg-blue-200"
+                                                        >📋 Chi tiết</button>
+                                                        <button
+                                                            onClick={() => { setSelectedCustomer(customer); setShowPaymentModal(true); }}
+                                                            className="px-3 py-2 bg-green-600 text-white rounded-lg font-medium text-sm hover:bg-green-700"
+                                                        >💵 Thu tiền</button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </>
                         )}
                     </div>
                 ) : (
-                    <div style={{ backgroundColor: 'white', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
                         {suppliersWithDebt.length === 0 ? (
-                            <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af' }}>
-                                <div style={{ fontSize: '48px', marginBottom: '12px' }}>✅</div>
+                            <div className="p-12 text-center text-gray-400">
+                                <div className="text-5xl mb-3">✅</div>
                                 <div>Không có nhà cung cấp nào còn nợ</div>
                             </div>
                         ) : (
-                            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                                <thead>
-                                    <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                        <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, color: '#6b7280' }}>Nhà cung cấp</th>
-                                        <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, color: '#6b7280' }}>Liên hệ</th>
-                                        <th style={{ padding: '12px 16px', textAlign: 'right', fontWeight: 600, color: '#6b7280' }}>Công nợ</th>
-                                        <th style={{ padding: '12px 16px', textAlign: 'center', fontWeight: 600, color: '#6b7280' }}>Thao tác</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
+                            <>
+                                {/* Mobile Cards */}
+                                <div className="md:hidden divide-y divide-gray-100">
                                     {suppliersWithDebt.map(supplier => (
-                                        <tr key={supplier.id} style={{ borderBottom: '1px solid #e5e7eb' }}>
-                                            <td style={{ padding: '12px 16px', fontWeight: 500 }}>{supplier.name}</td>
-                                            <td style={{ padding: '12px 16px', color: '#6b7280' }}>{supplier.phone || supplier.contact_person || '---'}</td>
-                                            <td style={{ padding: '12px 16px', textAlign: 'right', fontWeight: 600, color: '#f59e0b' }}>
-                                                {formatVND(supplier.debt_balance)}
-                                            </td>
-                                            <td style={{ padding: '12px 16px', textAlign: 'center' }}>
-                                                <button
-                                                    onClick={() => {
-                                                        setSelectedSupplier(supplier);
-                                                        setShowPaymentModal(true);
-                                                    }}
-                                                    style={{
-                                                        padding: '8px 16px',
-                                                        borderRadius: '6px',
-                                                        border: 'none',
-                                                        backgroundColor: '#f59e0b',
-                                                        color: 'white',
-                                                        fontWeight: 600,
-                                                        cursor: 'pointer'
-                                                    }}
-                                                >
-                                                    💳 Trả tiền
-                                                </button>
-                                            </td>
-                                        </tr>
+                                        <div key={supplier.id} className="p-4">
+                                            <div className="flex justify-between items-start mb-2">
+                                                <div>
+                                                    <div className="font-medium text-gray-900">{supplier.name}</div>
+                                                    <div className="text-sm text-gray-500">{supplier.phone || supplier.contact_person || '---'}</div>
+                                                </div>
+                                                <span className="font-bold text-amber-500">{formatVND(supplier.debt_balance)}</span>
+                                            </div>
+                                            <button
+                                                onClick={() => { setSelectedSupplier(supplier); setShowPaymentModal(true); }}
+                                                className="w-full py-2 bg-amber-500 text-white rounded-lg font-medium mt-2"
+                                            >💳 Trả tiền</button>
+                                        </div>
                                     ))}
-                                </tbody>
-                            </table>
+                                </div>
+                                {/* Desktop Table */}
+                                <table className="hidden md:table w-full">
+                                    <thead className="bg-gray-50 border-b">
+                                        <tr>
+                                            <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600">Nhà cung cấp</th>
+                                            <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600">Liên hệ</th>
+                                            <th className="px-4 py-3 text-right text-sm font-semibold text-gray-600">Công nợ</th>
+                                            <th className="px-4 py-3 text-center text-sm font-semibold text-gray-600">Thao tác</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y">
+                                        {suppliersWithDebt.map(supplier => (
+                                            <tr key={supplier.id} className="hover:bg-gray-50">
+                                                <td className="px-4 py-3 font-medium">{supplier.name}</td>
+                                                <td className="px-4 py-3 text-gray-600">{supplier.phone || supplier.contact_person || '---'}</td>
+                                                <td className="px-4 py-3 text-right font-bold text-amber-500">{formatVND(supplier.debt_balance)}</td>
+                                                <td className="px-4 py-3 text-center">
+                                                    <button
+                                                        onClick={() => { setSelectedSupplier(supplier); setShowPaymentModal(true); }}
+                                                        className="px-4 py-2 bg-amber-500 text-white rounded-lg font-medium"
+                                                    >💳 Trả tiền</button>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </>
                         )}
                     </div>
                 )}
@@ -495,6 +554,139 @@ export function DebtManagementPage() {
                                 ✓ Xác nhận
                             </button>
                         </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Debt Detail Modal */}
+            {showDebtDetailModal && detailCustomer && (
+                <div style={{
+                    position: 'fixed',
+                    inset: 0,
+                    backgroundColor: 'rgba(0,0,0,0.5)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    zIndex: 50
+                }}>
+                    <div style={{
+                        backgroundColor: 'white',
+                        borderRadius: '16px',
+                        padding: '24px',
+                        width: '95%',
+                        maxWidth: '600px',
+                        maxHeight: '80vh',
+                        overflow: 'hidden',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        boxShadow: '0 20px 25px rgba(0,0,0,0.15)'
+                    }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                            <h2 style={{ margin: 0, fontSize: '18px', fontWeight: 'bold' }}>
+                                📋 Chi tiết công nợ - {detailCustomer.name}
+                            </h2>
+                            <button
+                                onClick={() => { setShowDebtDetailModal(false); setDetailCustomer(null); }}
+                                style={{ background: 'none', border: 'none', fontSize: '24px', cursor: 'pointer', color: '#666' }}
+                            >×</button>
+                        </div>
+
+                        <div style={{ marginBottom: '16px', padding: '12px', backgroundColor: '#fef2f2', borderRadius: '8px' }}>
+                            <div style={{ fontSize: '14px', color: '#666' }}>Tổng công nợ hiện tại</div>
+                            <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#ef4444' }}>{formatVND(detailCustomer.debt_balance)}</div>
+                        </div>
+
+                        <div style={{ fontWeight: 600, marginBottom: '8px' }}>Đơn hàng chưa thanh toán hết:</div>
+                        <div style={{ flex: 1, overflowY: 'auto' }}>
+                            {(() => {
+                                const unpaidOrders = orders.filter(o =>
+                                    o.customer_id === detailCustomer.id &&
+                                    o.debt_amount > 0 &&
+                                    (o.remaining_debt === undefined || o.remaining_debt > 0)
+                                );
+                                if (unpaidOrders.length === 0) {
+                                    return (
+                                        <div style={{ textAlign: 'center', color: '#9ca3af', padding: '24px' }}>
+                                            Không có đơn hàng chưa thanh toán
+                                        </div>
+                                    );
+                                }
+                                return unpaidOrders.map(order => (
+                                    <div key={order.id} style={{
+                                        padding: '12px',
+                                        marginBottom: '8px',
+                                        backgroundColor: '#f9fafb',
+                                        borderRadius: '8px',
+                                        border: '1px solid #e5e7eb'
+                                    }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                            <div>
+                                                <div style={{ fontWeight: 600, color: '#22c55e' }}>{order.order_number}</div>
+                                                <div style={{ fontSize: '12px', color: '#6b7280' }}>{formatDate(order.created_at)}</div>
+                                            </div>
+                                            <div style={{ textAlign: 'right' }}>
+                                                <div style={{ fontSize: '12px', color: '#6b7280' }}>Còn nợ</div>
+                                                <div style={{ fontWeight: 'bold', color: '#ef4444' }}>
+                                                    {formatVND(order.remaining_debt ?? order.debt_amount)}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div style={{ fontSize: '12px', color: '#9ca3af', marginTop: '4px' }}>
+                                            Tổng đơn: {formatVND(order.total_amount)} • Đã trả: {formatVND(order.paid_amount || 0)}
+                                        </div>
+                                    </div>
+                                ));
+                            })()}
+                        </div>
+
+                        <div style={{ fontWeight: 600, marginTop: '16px', marginBottom: '8px' }}>Lịch sử thanh toán:</div>
+                        <div style={{ maxHeight: '150px', overflowY: 'auto' }}>
+                            {(() => {
+                                const customerPayments = getCustomerPayments(detailCustomer.id);
+                                if (customerPayments.length === 0) {
+                                    return (
+                                        <div style={{ textAlign: 'center', color: '#9ca3af', padding: '16px' }}>
+                                            Chưa có lịch sử thanh toán
+                                        </div>
+                                    );
+                                }
+                                return customerPayments.slice(0, 10).map(p => (
+                                    <div key={p.id} style={{
+                                        display: 'flex',
+                                        justifyContent: 'space-between',
+                                        padding: '8px',
+                                        backgroundColor: '#f0fdf4',
+                                        borderRadius: '6px',
+                                        marginBottom: '4px'
+                                    }}>
+                                        <div>
+                                            <div style={{ fontSize: '13px' }}>{formatDate(p.created_at)}</div>
+                                            <div style={{ fontSize: '11px', color: '#6b7280' }}>{p.payment_method === 'cash' ? 'Tiền mặt' : 'Chuyển khoản'}</div>
+                                        </div>
+                                        <div style={{ fontWeight: 600, color: '#22c55e' }}>+{formatVND(p.amount)}</div>
+                                    </div>
+                                ));
+                            })()}
+                        </div>
+
+                        <button
+                            onClick={() => {
+                                setShowDebtDetailModal(false);
+                                setSelectedCustomer(detailCustomer);
+                                setShowPaymentModal(true);
+                            }}
+                            style={{
+                                marginTop: '16px',
+                                width: '100%',
+                                padding: '12px',
+                                backgroundColor: '#22c55e',
+                                color: 'white',
+                                border: 'none',
+                                borderRadius: '8px',
+                                fontWeight: 600,
+                                cursor: 'pointer'
+                            }}
+                        >💵 Thu tiền ngay</button>
                     </div>
                 </div>
             )}

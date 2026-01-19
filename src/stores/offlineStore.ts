@@ -84,7 +84,18 @@ export const useOfflineStore = create<OfflineState>()(
         {
             name: 'offline-orders-storage',
             partialize: (state) => ({
-                pendingOrders: state.pendingOrders,
+                // Strip images from persistence to avoid quota issues
+                pendingOrders: state.pendingOrders.map(order => ({
+                    ...order,
+                    order_items: order.order_items?.map(item => ({
+                        ...item,
+                        product: item.product ? {
+                            ...item.product,
+                            image_url: undefined,
+                            images: undefined
+                        } : item.product
+                    }))
+                })),
                 lastSyncAttempt: state.lastSyncAttempt
             })
         }

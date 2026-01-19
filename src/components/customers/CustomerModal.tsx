@@ -16,6 +16,7 @@ export function CustomerModal({ customer, initialPhone, onSave, onClose }: Custo
         email: '',
         address: '',
         gender: '' as Gender | '',
+        date_of_birth: '',
         notes: '',
     });
     const [isSaving, setIsSaving] = useState(false);
@@ -29,6 +30,7 @@ export function CustomerModal({ customer, initialPhone, onSave, onClose }: Custo
                 email: customer.email || '',
                 address: customer.address || '',
                 gender: customer.gender || '',
+                date_of_birth: customer.date_of_birth || '',
                 notes: customer.notes || '',
             });
         } else {
@@ -39,7 +41,8 @@ export function CustomerModal({ customer, initialPhone, onSave, onClose }: Custo
                 phone: initialPhone || '',
                 email: '',
                 address: '',
-                gender: '',
+                gender: 'male',  // Mặc định là Nam
+                date_of_birth: '',
                 notes: '',
             });
         }
@@ -49,10 +52,11 @@ export function CustomerModal({ customer, initialPhone, onSave, onClose }: Custo
         e.preventDefault();
         setIsSaving(true);
         try {
-            // Convert empty gender to undefined for proper type compatibility
+            // Convert empty gender to 'male' (default)
             const dataToSave = {
                 ...formData,
-                gender: formData.gender === '' ? undefined : formData.gender as Gender,
+                gender: (formData.gender || 'male') as Gender,  // Mặc định là Nam
+                date_of_birth: formData.date_of_birth || undefined,
             };
             await onSave(dataToSave);
             onClose();
@@ -126,17 +130,40 @@ export function CustomerModal({ customer, initialPhone, onSave, onClose }: Custo
                         />
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Giới tính</label>
-                        <select
-                            value={formData.gender}
-                            onChange={(e) => setFormData({ ...formData, gender: e.target.value as Gender | '' })}
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Giới tính</label>
+                        <div className="flex gap-6">
+                            <label className="flex items-center gap-2 cursor-pointer">
+                                <input
+                                    type="radio"
+                                    name="gender"
+                                    value="male"
+                                    checked={formData.gender === 'male' || !formData.gender}
+                                    onChange={(e) => setFormData({ ...formData, gender: e.target.value as Gender })}
+                                    className="w-4 h-4 text-green-600 border-gray-300 focus:ring-green-500"
+                                />
+                                <span className="text-gray-700">Nam</span>
+                            </label>
+                            <label className="flex items-center gap-2 cursor-pointer">
+                                <input
+                                    type="radio"
+                                    name="gender"
+                                    value="female"
+                                    checked={formData.gender === 'female'}
+                                    onChange={(e) => setFormData({ ...formData, gender: e.target.value as Gender })}
+                                    className="w-4 h-4 text-green-600 border-gray-300 focus:ring-green-500"
+                                />
+                                <span className="text-gray-700">Nữ</span>
+                            </label>
+                        </div>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Ngày sinh</label>
+                        <input
+                            type="date"
+                            value={formData.date_of_birth}
+                            onChange={(e) => setFormData({ ...formData, date_of_birth: e.target.value })}
                             className="w-full px-4 py-2 rounded-lg border focus:ring-2 focus:ring-green-500 focus:border-green-500"
-                        >
-                            <option value="">-- Chọn giới tính --</option>
-                            <option value="male">Nam</option>
-                            <option value="female">Nữ</option>
-                            <option value="other">Khác</option>
-                        </select>
+                        />
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Ghi chú</label>

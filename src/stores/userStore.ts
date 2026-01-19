@@ -6,6 +6,9 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { UserProfile, UserRole, Role } from '@/types';
 import { supabase } from '@/lib/supabase';
+import { createBaseState, withAsync } from './baseStore';
+import type { BaseState } from './baseStore';
+import { logAction } from '@/lib/audit';
 
 // Define available permissions - Granular and detailed
 export type Permission =
@@ -156,11 +159,9 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
 export const ALL_PERMISSIONS: { code: Permission; label: string }[] =
     PERMISSION_GROUPS.flatMap(g => g.permissions);
 
-interface UserState {
+interface UserState extends BaseState {
     users: UserProfile[];
     roles: Role[];
-    loading: boolean;
-    error: string | null;
 
     // Actions
     fetchUsers: () => Promise<void>;
@@ -181,14 +182,12 @@ interface UserState {
 export const useUserStore = create<UserState>()(
     persist(
         (set, get) => ({
+            ...createBaseState(),
             users: [],
             roles: [],
-            loading: false,
-            error: null,
 
             fetchUsers: async () => {
-                set({ loading: true, error: null });
-                try {
+                await withAsync(set, async () => {
                     // In a real app with Supabase, we would fetch from the DB
                     if (supabase) {
                         const { data, error } = await supabase
@@ -200,19 +199,13 @@ export const useUserStore = create<UserState>()(
                         if (data) set({ users: data as UserProfile[] });
                     } else {
                         // Mock data for demo if Supabase not connected
-                        // (Would normally rely on initial mock data or empty)
                         console.log('Supabase not connected, using local state');
                     }
-                } catch (err: any) {
-                    set({ error: err.message });
-                    console.error('Error fetching users:', err);
-                } finally {
-                    set({ loading: false });
-                }
+                }, 'Không thể tải danh sách nhân viên');
             },
 
             createUser: async (user, password) => {
-                set({ loading: true, error: null });
+                set({ isLoading: true, error: null });
                 try {
                     console.log('Creating user:', user, 'Password:', password);
 
@@ -265,6 +258,9 @@ export const useUserStore = create<UserState>()(
                             console.error('Failed to create user in Supabase:', error);
                             throw error;
                         }
+
+                        // LOG ACTION
+                        await logAction('create_user', 'user_profiles', newUser.id, { name: newUser.full_name, role: newUser.role });
                     }
 
                     set(state => ({ users: [newUser, ...state.users] }));
@@ -275,12 +271,12 @@ export const useUserStore = create<UserState>()(
                     set({ error: err.message });
                     return null;
                 } finally {
-                    set({ loading: false });
+                    set({ isLoading: false });
                 }
             },
 
             updateUser: async (id, updates) => {
-                set({ loading: true, error: null });
+                set({ isLoading: true, error: null });
                 try {
                     if (supabase) {
                         const { error } = await supabase
@@ -297,13 +293,14 @@ export const useUserStore = create<UserState>()(
                 } catch (err: any) {
                     set({ error: err.message });
                 } finally {
-                    set({ loading: false });
+                    set({ isLoading: false });
                 }
             },
 
             deleteUser: async (id) => {
                 // Hard delete from Supabase and local state
                 try {
+                    const userToDelete = get().users.find(u => u.id === id);
                     if (supabase) {
                         const { error } = await supabase
                             .from('user_profiles')
@@ -314,6 +311,9 @@ export const useUserStore = create<UserState>()(
                             console.error('Failed to delete user from Supabase:', error);
                             throw error;
                         }
+
+                        // LOG ACTION
+                        await logAction('delete_user', 'user_profiles', id, { name: userToDelete?.full_name });
                     }
 
                     // Update local state

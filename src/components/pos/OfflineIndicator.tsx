@@ -4,8 +4,10 @@
 
 import React, { useState, useEffect } from 'react';
 import { Cloud, CloudOff, RefreshCw, AlertCircle, Check } from 'lucide-react';
-import { useOfflineOrders, useAutoSyncOrders } from '@/hooks/useOfflineOrders';
-import { syncOrderToServer } from '@/services/orderSyncService';
+import { useOfflineOrders, useAutoSync } from '@/hooks/useOfflineOrders';
+import type { OfflineOrder } from '@/hooks/useOfflineOrders';
+// import { syncOrderToServer } from '@/services/orderSyncService';
+
 
 interface OfflineIndicatorProps {
     className?: string;
@@ -16,7 +18,7 @@ export const OfflineIndicator: React.FC<OfflineIndicatorProps> = ({ className })
     const [unsyncedCount, setUnsyncedCount] = useState(0);
     const [syncing, setSyncing] = useState(false);
     const { getUnsyncedCount } = useOfflineOrders();
-    const { syncAllPending } = useAutoSyncOrders(syncOrderToServer);
+    const { syncAll } = useAutoSync(async (order: OfflineOrder) => order.local_id); // Placeholder sync fn
 
     // Update online status
     useEffect(() => {
@@ -51,7 +53,7 @@ export const OfflineIndicator: React.FC<OfflineIndicatorProps> = ({ className })
 
         setSyncing(true);
         try {
-            await syncAllPending();
+            await syncAll();
             const count = await getUnsyncedCount();
             setUnsyncedCount(count);
         } finally {
@@ -64,8 +66,8 @@ export const OfflineIndicator: React.FC<OfflineIndicatorProps> = ({ className })
             {/* Connection Status */}
             <div
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium ${isOnline
-                        ? 'bg-green-100 text-green-700'
-                        : 'bg-red-100 text-red-700'
+                    ? 'bg-green-100 text-green-700'
+                    : 'bg-red-100 text-red-700'
                     }`}
             >
                 {isOnline ? (
@@ -87,8 +89,8 @@ export const OfflineIndicator: React.FC<OfflineIndicatorProps> = ({ className })
                     onClick={handleManualSync}
                     disabled={!isOnline || syncing}
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${isOnline
-                            ? 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200 cursor-pointer'
-                            : 'bg-gray-100 text-gray-500 cursor-not-allowed'
+                        ? 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200 cursor-pointer'
+                        : 'bg-gray-100 text-gray-500 cursor-not-allowed'
                         }`}
                     title={isOnline ? 'Click to sync now' : 'Will sync when online'}
                 >
@@ -120,7 +122,7 @@ export const SyncStatusWidget: React.FC = () => {
     const [isOnline, setIsOnline] = useState(navigator.onLine);
     const [unsyncedCount, setUnsyncedCount] = useState(0);
     const { getUnsyncedCount, getAllOrders } = useOfflineOrders();
-    const { syncAllPending } = useAutoSyncOrders(syncOrderToServer);
+    const { syncAll } = useAutoSync(async (order: OfflineOrder) => order.local_id); // Placeholder sync fn
     const [syncing, setSyncing] = useState(false);
     const [lastSynced, setLastSynced] = useState<Date | null>(null);
 
@@ -144,7 +146,7 @@ export const SyncStatusWidget: React.FC = () => {
 
         setSyncing(true);
         try {
-            await syncAllPending();
+            await syncAll();
             setLastSynced(new Date());
             const count = await getUnsyncedCount();
             setUnsyncedCount(count);

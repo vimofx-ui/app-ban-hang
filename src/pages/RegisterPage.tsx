@@ -3,12 +3,14 @@
 // =============================================================================
 
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
 
 export function RegisterPage() {
     const navigate = useNavigate();
-    const { register, loading, error, clearError } = useAuthStore();
+    const { registerTenant, isLoading, error, clearError } = useAuthStore();
+    const [searchParams] = useSearchParams();
+    const refCode = searchParams.get('ref') || '';
 
     const [formData, setFormData] = useState({
         name: '',
@@ -16,16 +18,48 @@ export function RegisterPage() {
         phone: '',
         password: '',
         confirmPassword: '',
+        brandName: '',
+        brandSlug: '',
+        referralCode: refCode,
     });
     const [showPassword, setShowPassword] = useState(false);
     const [validationError, setValidationError] = useState('');
 
     const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        setFormData({ ...formData, [e.target.name]: e.target.value });
+        const { name, value } = e.target;
+
+        if (name === 'brandName') {
+            // Auto-generate slug from brand name if slug is empty or matches auto-generated pattern
+            const slug = value.toLowerCase()
+                .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // remove accents
+                .replace(/[^a-z0-9]/g, '-'); // replace non-alphanumeric with dash
+
+            setFormData(prev => ({
+                ...prev,
+                brandName: value,
+                brandSlug: prev.brandSlug === '' || prev.brandSlug === prev.brandName.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, '-')
+                    ? slug
+                    : prev.brandSlug
+            }));
+        } else if (name === 'brandSlug') {
+            // Allow manual slug edit but strictly format it
+            const slug = value.toLowerCase().replace(/[^a-z0-9-]/g, '');
+            setFormData({ ...formData, brandSlug: slug });
+        } else {
+            setFormData({ ...formData, [name]: value });
+        }
         setValidationError('');
     };
 
     const validateForm = () => {
+        if (!formData.brandName.trim()) {
+            setValidationError('Vui lòng nhập tên cửa hàng');
+            return false;
+        }
+        if (!formData.brandSlug.trim()) {
+            setValidationError('Vui lòng nhập đường dẫn cửa hàng');
+            return false;
+        }
         if (formData.password.length < 6) {
             setValidationError('Mật khẩu phải có ít nhất 6 ký tự');
             return false;
@@ -43,9 +77,35 @@ export function RegisterPage() {
 
         if (!validateForm()) return;
 
-        const success = await register(formData.email, formData.password, formData.name, 'staff', formData.phone);
+        const success = await registerTenant(
+            formData.email,
+            formData.password,
+            formData.name,
+            formData.brandName,
+            formData.brandSlug,
+            formData.phone,
+            formData.referralCode
+        );
+
         if (success) {
-            navigate('/');
+            // Redirect to the new subdomain
+            const protocol = window.location.protocol;
+            const host = window.location.host;
+            // Handle localhost vs production (e.g., localhost:3000 -> slug.localhost:3000 seems odd but standard for local dev with hosts file, 
+            // but for Vercel it's slug.domain.com)
+
+            // Check if we are already on a subdomain? No, this is register page.
+
+            // Construct new URL
+            // If host starts with 'www.', remove it? Or just prepend slug?
+            // Safer: slug + "." + host
+
+            // However, for localhost without custom setup, subdomains don't work.
+            // But we assume the user setup environment or requests this for Prod.
+            // Let's assume standard subdomain logic.
+
+            const newUrl = `${protocol}//${formData.brandSlug}.${host}`;
+            window.location.href = newUrl;
         }
     };
 
@@ -68,6 +128,9 @@ export function RegisterPage() {
         color: '#374151',
         marginBottom: '6px'
     };
+
+    // Get current host for display
+    const currentHost = window.location.host;
 
     return (
         <div style={{
@@ -97,8 +160,8 @@ export function RegisterPage() {
                             <polyline points="9 22 9 12 15 12 15 22" />
                         </svg>
                     </div>
-                    <h1 style={{ fontSize: '24px', fontWeight: 'bold', color: '#111827', margin: 0 }}>Tạo tài khoản</h1>
-                    <p style={{ color: '#6B7280', marginTop: '4px' }}>Đăng ký để sử dụng Grocery POS</p>
+                    <h1 style={{ fontSize: '24px', fontWeight: 'bold', color: '#111827', margin: 0 }}>Tạo cửa hàng mới</h1>
+                    <p style={{ color: '#6B7280', marginTop: '4px' }}>Đăng ký Use Bango Pos</p>
                 </div>
 
                 {/* Register Card */}
@@ -125,9 +188,40 @@ export function RegisterPage() {
                             </div>
                         )}
 
+                        {/* Brand Name */}
+                        <div style={{ marginBottom: '20px' }}>
+                            <label style={labelStyle}>Tên cửa hàng</label>
+                            <input
+                                type="text"
+                                name="brandName"
+                                value={formData.brandName}
+                                onChange={handleChange}
+                                placeholder="Ví dụ: Tạp hóa Cô Ba"
+                                required
+                                style={inputStyle}
+                            />
+                        </div>
+
+                        {/* Brand Slug */}
+                        <div style={{ marginBottom: '20px' }}>
+                            <label style={labelStyle}>Đường dẫn cửa hàng</label>
+                            <div style={{ display: 'flex', alignItems: 'center' }}>
+                                <span style={{ color: '#6b7280', marginRight: '8px', fontSize: '14px' }}>{currentHost}/</span>
+                                <input
+                                    type="text"
+                                    name="brandSlug"
+                                    value={formData.brandSlug}
+                                    onChange={handleChange}
+                                    placeholder="taphoacoba"
+                                    required
+                                    style={inputStyle}
+                                />
+                            </div>
+                        </div>
+
                         {/* Name */}
                         <div style={{ marginBottom: '20px' }}>
-                            <label style={labelStyle}>Họ và tên</label>
+                            <label style={labelStyle}>Họ và tên chủ cửa hàng</label>
                             <input
                                 type="text"
                                 name="name"
@@ -141,7 +235,7 @@ export function RegisterPage() {
 
                         {/* Email */}
                         <div style={{ marginBottom: '20px' }}>
-                            <label style={labelStyle}>Email</label>
+                            <label style={labelStyle}>Email đăng nhập</label>
                             <input
                                 type="email"
                                 name="email"
@@ -211,30 +305,44 @@ export function RegisterPage() {
                             />
                         </div>
 
+                        {/* Referral Code */}
+                        <div style={{ marginBottom: '20px' }}>
+                            <label style={labelStyle}>Mã giới thiệu <span style={{ color: '#9ca3af', fontWeight: 'normal' }}>(tùy chọn)</span></label>
+                            <input
+                                type="text"
+                                name="referralCode"
+                                value={formData.referralCode}
+                                onChange={handleChange}
+                                placeholder="Nhập mã CTV nếu có"
+                                style={inputStyle}
+                                readOnly={!!refCode}
+                            />
+                        </div>
+
                         {/* Submit Button */}
                         <button
                             type="submit"
-                            disabled={loading}
+                            disabled={isLoading}
                             style={{
                                 width: '100%',
                                 padding: '12px',
                                 borderRadius: '12px',
                                 fontWeight: '600',
                                 color: 'white',
-                                background: loading ? '#9ca3af' : 'linear-gradient(to right, #22c55e, #16a34a)',
+                                background: isLoading ? '#9ca3af' : 'linear-gradient(to right, #22c55e, #16a34a)',
                                 border: 'none',
-                                cursor: loading ? 'not-allowed' : 'pointer',
+                                cursor: isLoading ? 'not-allowed' : 'pointer',
                                 fontSize: '16px'
                             }}
                         >
-                            {loading ? 'Đang tạo tài khoản...' : 'Đăng ký'}
+                            {isLoading ? 'Đang khởi tạo...' : 'Đăng ký cửa hàng'}
                         </button>
                     </form>
 
                     {/* Login Link */}
                     <div style={{ marginTop: '24px', textAlign: 'center', fontSize: '14px', color: '#4b5563' }}>
                         Đã có tài khoản?{' '}
-                        <Link to="/login" style={{ color: '#16a34a', fontWeight: '500', textDecoration: 'none' }}>
+                        <Link to="/dang-nhap" style={{ color: '#16a34a', fontWeight: '500', textDecoration: 'none' }}>
                             Đăng nhập
                         </Link>
                     </div>

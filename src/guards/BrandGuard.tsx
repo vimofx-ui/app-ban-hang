@@ -58,13 +58,7 @@ export function BrandGuard({ children, fallback }: BrandGuardProps) {
 
             // Brand is valid - set context
             setBrandInfo(brand);
-            setCurrentBrand({
-                id: brand.id,
-                name: brand.name,
-                slug: brand.slug,
-                logo_url: brand.logo_url,
-                // Add other fields as needed
-            });
+            setCurrentBrand(brand as any);
             storeBrandInfo(brand);
             setStatus('valid');
         };
@@ -149,13 +143,7 @@ export function useCurrentBrand(): BrandInfo | null {
     const { currentBrand } = useBrandStore();
 
     if (currentBrand) {
-        return {
-            id: currentBrand.id,
-            name: currentBrand.name,
-            slug: currentBrand.slug || '',
-            logo_url: currentBrand.logo_url,
-            primary_color: currentBrand.primary_color
-        };
+        return currentBrand;
     }
 
     return null;

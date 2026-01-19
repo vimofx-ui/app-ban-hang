@@ -16,7 +16,7 @@ export function BranchesPage() {
         createBranch, updateBranch, deleteBranch, setCurrentBranch, fetchBranches,
     } = useBranchStore();
 
-    const { currentBrand, fetchCurrentBrand } = useBrandStore();
+    const { currentBrand, fetchCurrentBrand, createBrand: createNewBrand } = useBrandStore();
     const brandId = currentBrand?.id;
 
     // Stock transfers store
@@ -123,8 +123,19 @@ export function BranchesPage() {
                     </div>
                     {isAdmin && (
                         <button
-                            style={btnPrimary}
-                            onClick={() => { setEditingBranch(null); setShowModal(true); }}
+                            style={{
+                                ...btnPrimary,
+                                opacity: !useBrandStore.getState().canAccessFeature('multi_branch') && activeBranches.length >= 1 ? 0.5 : 1,
+                                cursor: !useBrandStore.getState().canAccessFeature('multi_branch') && activeBranches.length >= 1 ? 'not-allowed' : 'pointer'
+                            }}
+                            onClick={() => {
+                                if (!useBrandStore.getState().canAccessFeature('multi_branch') && activeBranches.length >= 1) {
+                                    alert('Gói Basic/Trial chỉ được tạo 1 chi nhánh. Vui lòng nâng cấp gói Pro để mở rộng chuỗi.');
+                                    return;
+                                }
+                                setEditingBranch(null);
+                                setShowModal(true);
+                            }}
                         >
                             + Thêm chi nhánh
                         </button>
@@ -658,9 +669,19 @@ export function BranchesPage() {
                             } else if (brandId) {
                                 result = await createBranch({ ...data, brand_id: brandId, status: 'active' });
                             } else {
-                                console.error('No brand_id available.');
-                                alert('Lỗi: Không tìm thấy thương hiệu. Vui lòng đăng nhập lại.');
-                                return;
+                                // Auto-create brand for new users/demo
+                                try {
+                                    const newBrand = await createNewBrand('Cửa hàng của tôi');
+                                    if (newBrand) {
+                                        result = await createBranch({ ...data, brand_id: newBrand.id, status: 'active' });
+                                    } else {
+                                        throw new Error('Không thể tạo thương hiệu mới');
+                                    }
+                                } catch (e: any) {
+                                    console.error('Auto-create brand failed:', e);
+                                    alert('Lỗi: Không thể khởi tạo thương hiệu. ' + e.message);
+                                    return;
+                                }
                             }
 
                             if (result) {

@@ -7,6 +7,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useUserStore, PERMISSION_GROUPS } from '@/stores/userStore';
 import { useShiftStore } from '@/stores/shiftStore';
 import { useAuthStore } from '@/stores/authStore';
+import { useBranchStore } from '@/stores/branchStore';
 import { formatVND } from '@/lib/cashReconciliation';
 import { cn } from '@/lib/utils';
 import type { UserProfile } from '@/types';
@@ -47,15 +48,20 @@ export function EmployeesPage() {
         return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
     });
 
+    const { branches, fetchBranches } = useBranchStore();
+    const { brandId } = useAuthStore.getState();
+
     useEffect(() => {
         fetchUsers();
         fetchRoles();
-    }, [fetchUsers, fetchRoles]);
+        if (brandId) fetchBranches(brandId);
+    }, [fetchUsers, fetchRoles, fetchBranches, brandId]);
 
     // Check access - use authStore.user instead of shiftStore.currentUser
     const canManageEmployees = useMemo(() => {
-        return authUser?.role === 'admin' || authUser?.role === 'owner';
-    }, [authUser]);
+        const fullUser = users.find(u => u.id === authUser?.id) || (authUser as unknown as UserProfile);
+        return hasPermission(fullUser, 'employee_manage') || hasPermission(fullUser, 'employee_view');
+    }, [authUser, users, hasPermission]);
 
     const filteredUsers = useMemo(() => {
         // If admin, show all (filtered). If staff, show ONLY self.
@@ -554,6 +560,7 @@ interface EmployeeModalProps {
 
 function EmployeeModal({ isOpen, onClose, initialData, onSave }: EmployeeModalProps) {
     const { roles } = useUserStore();
+    const { branches } = useBranchStore();
     const [formData, setFormData] = useState<Partial<UserProfile> & { email?: string; phone?: string }>({
         full_name: '',
         role: 'staff',

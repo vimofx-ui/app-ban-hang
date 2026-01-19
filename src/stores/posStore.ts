@@ -6,7 +6,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { generateId } from '@/lib/utils';
 import type { Product, Customer, Order, OrderItem, PaymentMethod, Shift } from '@/types';
-import { logGhostScan, logCartCleared, logQuantityChange, logDiscountChange } from '@/lib/ghostScan';
+import { logGhostScan, logCartCleared, logQuantityChange, logDiscountChange, logDraftDeleted, logOrderSessionSummary } from '@/lib/ghostScan';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { useAuthStore } from './authStore';
 import { useUserStore } from './userStore';
@@ -29,14 +29,46 @@ export interface CartItem extends OrderItem {
 
 export interface DraftOrder {
     id: string;
+    branchId?: string; // Add branchId
     timestamp: string;
     note?: string;
     order: Partial<Order>;
     items: CartItem[];
     customer: Customer | null;
+    removedItems?: RemovedItemRecord[];
+    sessionEvents?: Array<{
+        type: string;
+        description: string;
+        time: string;
+        valueDiff?: number;
+    }>;
+    sessionStartTime?: Date | null;
+    sessionHighWaterMark?: number;
+    lastPrintTime?: Date | null;
+    switchCount?: number;
+}
+
+interface RemovedItemRecord {
+    productName: string;
+    quantity: number; // Amount removed/reduced
+    originalQuantity?: number; // Original quantity before removal
+    unitPrice: number;
+    totalPrice: number;
+    addedAt?: string; // When the item was first added/scanned
+    removedAt: string; // When the item was removed/reduced
+    reason?: string;
+    actionType?: 'removed' | 'reduced'; // Whether fully removed or just reduced
 }
 
 interface POSState {
+    sessionHighWaterMark: number; // Max potential revenue reached in this session
+    removedItems: RemovedItemRecord[]; // Items removed during this session
+    sessionEvents: Array<{
+        type: string;
+        description: string;
+        time: string;
+        valueDiff?: number;
+    }>; // Timeline of actions
     // Current Transaction State
     cartItems: CartItem[];
     currentOrder: Partial<Order> | null;
@@ -59,13 +91,16 @@ interface POSState {
     // UI & System State
     isSubmitting: boolean;
     currentShiftId: string | null;
-    currentUserId: string | null;
-    wholesaleMode: boolean; // Wholesale pricing mode
 
-    // Draft Orders
-    draftOrders: DraftOrder[];
+    // Risk Assessment State
+    sessionStartTime: Date | null;
+    lastPrintTime: Date | null;
+    switchCount: number;
 
     // Actions
+    setLastPrintTime: (date: Date | null) => void;
+    setSwitchCount: (count: number) => void;
+
     addItem: (product: Product, quantity?: number, unitPrice?: number) => void;
     addItemWithUnit: (product: Product, quantity: number, unitName: string, unitPrice: number, conversionRate: number, unitId?: string) => void;
     updateItemQuantity: (itemId: string, quantity: number) => void;
@@ -98,6 +133,11 @@ interface POSState {
     sanitizeState: () => void;
     loadFromOrder: (order: Order, editMode?: boolean) => void;
     isEditMode: boolean;
+
+    // Restore missing state properties
+    currentUserId: string | null;
+    wholesaleMode: boolean;
+    draftOrders: DraftOrder[];
 }
 
 // Initial State
@@ -121,6 +161,12 @@ const initialState = {
     isSubmitting: false,
     wholesaleMode: false,
     isEditMode: false,
+    sessionStartTime: null,
+    lastPrintTime: null,
+    switchCount: 0,
+    sessionHighWaterMark: 0,
+    removedItems: [],
+    sessionEvents: [],
 };
 
 // ============= Store =============
@@ -129,9 +175,28 @@ export const usePOSStore = create<POSState>()(
         (set, get) => ({
             ...initialState,
 
+            setLastPrintTime: (date: Date | null) => set((state) => {
+                if (!date) return { lastPrintTime: null };
+                const printEvent = {
+                    type: 'print_provisional',
+                    description: `🖨️ In tạm tính (${state.cartItems.length} món, ${state.total.toLocaleString()}đ)`,
+                    time: date.toISOString(),
+                    valueDiff: 0
+                };
+                return {
+                    lastPrintTime: date,
+                    sessionEvents: [...state.sessionEvents, printEvent]
+                };
+            }),
+
+            setSwitchCount: (count: number) => set({ switchCount: count }),
+
             // Add item to cart
             addItem: (product: Product, quantity = 1, unitPrice?: number) => {
                 set((state) => {
+                    // Update session start time if this is the first item
+                    const sessionStartTime = state.cartItems.length === 0 ? new Date() : state.sessionStartTime;
+
                     // Determine price: unitPrice override > wholesaleMode > selling_price
                     let price = unitPrice;
                     if (price === undefined) {
@@ -141,6 +206,7 @@ export const usePOSStore = create<POSState>()(
                             price = product.selling_price;
                         }
                     }
+
 
                     const existingIndex = state.cartItems.findIndex(
                         (item) => item.product_id === product.id && item.unit_price === price
@@ -181,10 +247,25 @@ export const usePOSStore = create<POSState>()(
                     const subtotal = newItems.reduce((sum, item) => sum + item.total_price, 0);
                     const total = subtotal - state.discountAmount;
 
+                    // Update High Water Mark tracking
+                    const currentPotential = total;
+                    const newHighWaterMark = Math.max(state.sessionHighWaterMark, currentPotential);
+
+                    // Track session event
+                    const newEvent = {
+                        type: 'add_item',
+                        description: `Thêm ${product.name} (x${quantity}) - ${(price * quantity).toLocaleString()}đ`,
+                        time: new Date().toISOString(),
+                        valueDiff: price * quantity
+                    };
+
                     return {
                         cartItems: newItems,
                         subtotal,
                         total,
+                        sessionStartTime,
+                        sessionEvents: [...state.sessionEvents, newEvent],
+                        sessionHighWaterMark: newHighWaterMark,
                         change: state.cashReceived - total,
                     };
                 });
@@ -199,6 +280,7 @@ export const usePOSStore = create<POSState>()(
                     );
 
                     let newItems: CartItem[];
+                    let itemValueChange = 0;
 
                     if (existingIndex >= 0) {
                         // Update existing item AND move to top of list
@@ -230,15 +312,30 @@ export const usePOSStore = create<POSState>()(
                             selectedUnitId: unitId,
                         };
                         newItems = [newItem, ...state.cartItems];
+                        itemValueChange = newItem.total_price;
                     }
 
                     const subtotal = newItems.reduce((sum, item) => sum + item.total_price, 0);
                     const total = subtotal - state.discountAmount;
 
+                    // Session Risk Tracking
+                    const currentSessionEvents = state.sessionEvents || [];
+                    const newEvent = {
+                        type: 'add_item_unit',
+                        description: `Thêm món (đơn vị): ${product.name} - ${unitName} (SL: ${quantity})`,
+                        time: new Date().toISOString(),
+                        valueDiff: itemValueChange
+                    };
+
+                    const newHighWaterMark = Math.max(state.sessionHighWaterMark || 0, total);
+
                     return {
                         cartItems: newItems,
                         subtotal,
                         total,
+                        sessionStartTime: state.sessionStartTime || new Date(),
+                        sessionHighWaterMark: newHighWaterMark,
+                        sessionEvents: [...currentSessionEvents, newEvent],
                         change: state.cashReceived - total,
                     };
                 });
@@ -253,6 +350,45 @@ export const usePOSStore = create<POSState>()(
 
                 // Log if quantity decreased (potential ghost scan)
                 // Use optional chaining for safety if logging fails
+                // Track removal/reduction logic
+                let removedLog = state.removedItems || [];
+                let sessionEvents = state.sessionEvents || [];
+
+                // Diff Calculation
+                const oldTotalItemPrice = item.unit_price * item.quantity;
+                const newTotalItemPrice = item.unit_price * quantity;
+                const diff = newTotalItemPrice - oldTotalItemPrice; // Negative if reducing
+
+                if (quantity < item.quantity) {
+                    // It's a reduction
+                    const reducedQty = item.quantity - quantity;
+                    removedLog = [...removedLog, {
+                        productName: item.product.name,
+                        quantity: reducedQty,
+                        originalQuantity: item.quantity,
+                        unitPrice: item.unit_price,
+                        totalPrice: reducedQty * item.unit_price,
+                        addedAt: item.created_at,
+                        removedAt: new Date().toISOString(),
+                        reason: 'Giảm số lượng',
+                        actionType: 'reduced' as const
+                    }];
+
+                    sessionEvents = [...sessionEvents, {
+                        type: 'reduce_quantity',
+                        description: `Giảm SL ${item.product.name}: ${item.quantity} -> ${quantity}`,
+                        time: new Date().toISOString(),
+                        valueDiff: diff
+                    }];
+                } else if (quantity > item.quantity) {
+                    sessionEvents = [...sessionEvents, {
+                        type: 'increase_quantity',
+                        description: `Tăng SL ${item.product.name}: ${item.quantity} -> ${quantity}`,
+                        time: new Date().toISOString(),
+                        valueDiff: diff
+                    }];
+                }
+
                 if (quantity < item.quantity) {
                     try {
                         logQuantityChange({
@@ -263,6 +399,9 @@ export const usePOSStore = create<POSState>()(
                             shiftId: state.currentShiftId || undefined,
                             orderId: state.currentOrder?.id,
                             userId: useAuthStore.getState().user?.id,
+                            events: sessionEvents, // Pass events
+                            lastPrintTime: state.lastPrintTime,
+                            switchCount: state.switchCount
                         });
                     } catch (e) { console.error('Log failed', e); }
                 }
@@ -274,48 +413,152 @@ export const usePOSStore = create<POSState>()(
                 }
 
                 set((state) => {
-                    const newItems = state.cartItems.map((item) =>
-                        item.id === itemId
+                    const newItems = state.cartItems.map((cartItem) =>
+                        cartItem.id === itemId
                             ? {
-                                ...item,
+                                ...cartItem,
                                 quantity,
-                                total_price: quantity * item.unit_price,
+                                total_price: quantity * cartItem.unit_price,
                             }
-                            : item
+                            : cartItem
                     );
 
-                    const subtotal = newItems.reduce((sum, item) => sum + item.total_price, 0);
+                    const subtotal = newItems.reduce((sum, cartItem) => sum + cartItem.total_price, 0);
                     const total = subtotal - state.discountAmount;
+
+                    const newHighWaterMark = Math.max(state.sessionHighWaterMark || 0, total);
 
                     return {
                         cartItems: newItems,
                         subtotal,
                         total,
                         change: state.cashReceived - total,
+                        removedItems: removedLog,
+                        sessionEvents: sessionEvents,
+                        sessionHighWaterMark: newHighWaterMark,
                     };
                 });
             },
 
+            removeItem: (itemId: string, reason?: string) => {
+                const state = get();
+                const item = state.cartItems.find((i) => i.id === itemId);
+
+                // Track removal for session
+                if (item) {
+                    // Calculate value lost
+                    const lostValue = item.quantity * item.unit_price;
+
+                    // Session Event
+                    const sessionEvents = state.sessionEvents || [];
+                    const newEvent = {
+                        type: 'remove_item',
+                        description: `Xóa món: ${item.product.name} (SL: ${item.quantity})`,
+                        time: new Date().toISOString(),
+                        valueDiff: -lostValue
+                    };
+
+                    try {
+                        logGhostScan({
+                            item,
+                            product: item.product,
+                            reason,
+                            shiftId: state.currentShiftId || undefined,
+                            orderId: state.currentOrder?.id,
+                            userId: useAuthStore.getState().user?.id,
+                            addedAt: undefined, // We could track when item was added to cart for duration calc
+                            events: [...sessionEvents, newEvent], // Pass events
+                            lastPrintTime: state.lastPrintTime,
+                            switchCount: state.switchCount
+                        });
+                    } catch (e) { console.error('Log failed', e); }
+
+                    set((state) => {
+                        const newItems = state.cartItems.filter((cartItem) => cartItem.id !== itemId);
+                        const subtotal = newItems.reduce((sum, cartItem) => sum + cartItem.total_price, 0);
+                        const total = subtotal - state.discountAmount;
+
+                        const newHighWaterMark = Math.max(state.sessionHighWaterMark || 0, total);
+
+                        return {
+                            cartItems: newItems,
+                            subtotal,
+                            total,
+                            change: state.cashReceived - total,
+                            removedItems: [...(state.removedItems || []), {
+                                productName: item.product.name,
+                                quantity: item.quantity,
+                                originalQuantity: item.quantity,
+                                unitPrice: item.unit_price,
+                                totalPrice: lostValue,
+                                addedAt: item.created_at,
+                                removedAt: new Date().toISOString(),
+                                reason: reason || 'Xóa khỏi giỏ',
+                                actionType: 'removed' as const
+                            }],
+                            sessionEvents: [...sessionEvents, newEvent],
+                            sessionHighWaterMark: newHighWaterMark,
+                        };
+                    });
+                }
+            },
+
             updateItemNote: (itemId: string, note: string) => {
-                set((state) => ({
-                    cartItems: state.cartItems.map((item) =>
-                        item.id === itemId ? { ...item, notes: note } : item
-                    ),
-                }));
+                set((state) => {
+                    const item = state.cartItems.find(i => i.id === itemId);
+                    if (!item) return {};
+
+                    const newEvent = {
+                        type: 'update_item_note',
+                        description: `Cập nhật ghi chú món: ${item.product.name} (Ghi chú: ${note})`,
+                        time: new Date().toISOString(),
+                        valueDiff: 0
+                    };
+
+                    return {
+                        cartItems: state.cartItems.map((cartItem) =>
+                            cartItem.id === itemId ? { ...cartItem, notes: note } : cartItem
+                        ),
+                        sessionEvents: [...state.sessionEvents, newEvent]
+                    };
+                });
             },
 
             updateItemUnit: (itemId: string, unitName: string) => {
-                set((state) => ({
-                    cartItems: state.cartItems.map((item) =>
-                        item.id === itemId ? { ...item, unitName } : item
-                    ),
-                }));
+                set((state) => {
+                    const item = state.cartItems.find(i => i.id === itemId);
+                    if (!item) return {};
+
+                    const newEvent = {
+                        type: 'update_item_unit',
+                        description: `Cập nhật đơn vị món: ${item.product.name} (Đơn vị: ${unitName})`,
+                        time: new Date().toISOString(),
+                        valueDiff: 0
+                    };
+
+                    return {
+                        cartItems: state.cartItems.map((cartItem) =>
+                            cartItem.id === itemId ? { ...cartItem, unitName } : cartItem
+                        ),
+                        sessionEvents: [...state.sessionEvents, newEvent]
+                    };
+                });
             },
 
             updateItemDiscount: (itemId: string, discount: number, reason?: string) => {
                 const state = get();
                 const item = state.cartItems.find(i => i.id === itemId);
                 if (item && item.discount_amount !== discount) {
+                    const oldDiscount = item.discount_amount;
+                    const discountDiff = discount - oldDiscount;
+
+                    const newEvent = {
+                        type: 'update_item_discount',
+                        description: `Cập nhật giảm giá món: ${item.product.name} (Từ ${oldDiscount} -> ${discount})`,
+                        time: new Date().toISOString(),
+                        valueDiff: -discountDiff // Negative because discount reduces total value
+                    };
+
                     try {
                         logDiscountChange({
                             item,
@@ -326,87 +569,79 @@ export const usePOSStore = create<POSState>()(
                             shiftId: state.currentShiftId || undefined,
                             orderId: state.currentOrder?.id,
                             userId: useAuthStore.getState().user?.id,
+                            events: [...state.sessionEvents, newEvent] // Pass events
                         });
                     } catch (e) { console.error('Log failed', e); }
-                }
 
-                set((state) => {
-                    const newItems = state.cartItems.map((item) => {
-                        if (item.id === itemId) {
-                            return {
-                                ...item,
-                                discount_amount: discount,
-                                total_price: (item.quantity * item.unit_price) - discount,
-                                notes: reason ? reason : item.notes
-                            };
-                        }
-                        return item;
+                    set((state) => {
+                        const newItems = state.cartItems.map((cartItem) => {
+                            if (cartItem.id === itemId) {
+                                return {
+                                    ...cartItem,
+                                    discount_amount: discount,
+                                    total_price: (cartItem.quantity * cartItem.unit_price) - discount,
+                                    notes: reason ? reason : cartItem.notes
+                                };
+                            }
+                            return cartItem;
+                        });
+                        const subtotal = newItems.reduce((sum, cartItem) => sum + cartItem.total_price, 0);
+                        const total = subtotal - state.discountAmount;
+
+                        const newHighWaterMark = Math.max(state.sessionHighWaterMark || 0, total);
+
+                        return {
+                            cartItems: newItems,
+                            subtotal,
+                            total,
+                            change: state.cashReceived - total,
+                            sessionEvents: [...state.sessionEvents, newEvent],
+                            sessionHighWaterMark: newHighWaterMark,
+                        };
                     });
-                    const subtotal = newItems.reduce((sum, item) => sum + item.total_price, 0);
-                    const total = subtotal - state.discountAmount;
-                    return {
-                        cartItems: newItems,
-                        subtotal,
-                        total,
-                        change: state.cashReceived - total,
-                    };
-                });
+                }
             },
 
             // Update item price directly
             updateItemPrice: (itemId: string, price: number) => {
                 set((state) => {
-                    const newItems = state.cartItems.map((item) => {
-                        if (item.id === itemId) {
+                    const item = state.cartItems.find(i => i.id === itemId);
+                    if (!item) return {};
+
+                    const oldPrice = item.unit_price;
+                    const priceDiff = price - oldPrice;
+                    const valueDiff = priceDiff * item.quantity;
+
+                    const newEvent = {
+                        type: 'update_item_price',
+                        description: `Cập nhật giá món: ${item.product.name} (Từ ${oldPrice} -> ${price})`,
+                        time: new Date().toISOString(),
+                        valueDiff: valueDiff
+                    };
+
+                    const newItems = state.cartItems.map((cartItem) => {
+                        if (cartItem.id === itemId) {
                             return {
-                                ...item,
+                                ...cartItem,
                                 unit_price: price,
                                 // Recalculate total price: (qty * new_price) - existing_discount
-                                total_price: (item.quantity * price) - item.discount_amount,
+                                total_price: (cartItem.quantity * price) - cartItem.discount_amount,
                             };
                         }
-                        return item;
+                        return cartItem;
                     });
-                    const subtotal = newItems.reduce((sum, item) => sum + item.total_price, 0);
+                    const subtotal = newItems.reduce((sum, cartItem) => sum + cartItem.total_price, 0);
                     const total = subtotal - state.discountAmount;
-                    return {
-                        cartItems: newItems,
-                        subtotal,
-                        total,
-                        change: state.cashReceived - total,
-                    };
-                });
-            },
 
-            // Remove item from cart (with Ghost Scan logging)
-            removeItem: (itemId: string, reason?: string) => {
-                const state = get();
-                const item = state.cartItems.find((i) => i.id === itemId);
-
-                if (item) {
-                    // Log ghost scan
-                    try {
-                        logGhostScan({
-                            item,
-                            product: item.product,
-                            reason,
-                            shiftId: state.currentShiftId || undefined,
-                            orderId: state.currentOrder?.id,
-                            userId: useAuthStore.getState().user?.id,
-                        });
-                    } catch (e) { console.error('Log failed', e); }
-                }
-
-                set((state) => {
-                    const newItems = state.cartItems.filter((item) => item.id !== itemId);
-                    const subtotal = newItems.reduce((sum, item) => sum + item.total_price, 0);
-                    const total = subtotal - state.discountAmount;
+                    const newHighWaterMark = Math.max(state.sessionHighWaterMark || 0, total);
 
                     return {
                         cartItems: newItems,
                         subtotal,
                         total,
                         change: state.cashReceived - total,
+                        sessionEvents: [...state.sessionEvents, newEvent],
+                        sessionHighWaterMark: newHighWaterMark,
                     };
                 });
             },
@@ -415,12 +650,15 @@ export const usePOSStore = create<POSState>()(
             toggleWholesaleMode: () => {
                 set((state) => {
                     const newMode = !state.wholesaleMode;
+                    let totalValueChange = 0;
+
                     const newItems = state.cartItems.map((item) => {
                         // Only update items using base unit (no selectedUnitId)
-                        // If item has selectedUnitId, it means it's a specific unit, we skip for now 
+                        // If item has selectedUnitId, it means it's a specific unit, we skip for now
                         // unless we want to support wholesale price per unit (requires data structure change)
                         if (!item.selectedUnitId) {
                             let newPrice = item.unit_price;
+                            const oldItemTotalPrice = item.total_price;
 
                             if (newMode) {
                                 // Switching TO Wholesale
@@ -434,10 +672,12 @@ export const usePOSStore = create<POSState>()(
                             }
 
                             if (newPrice !== item.unit_price) {
+                                const newItemTotalPrice = (item.quantity * newPrice) - item.discount_amount;
+                                totalValueChange += (newItemTotalPrice - oldItemTotalPrice);
                                 return {
                                     ...item,
                                     unit_price: newPrice,
-                                    total_price: (item.quantity * newPrice) - item.discount_amount,
+                                    total_price: newItemTotalPrice,
                                 };
                             }
                         }
@@ -447,12 +687,23 @@ export const usePOSStore = create<POSState>()(
                     const subtotal = newItems.reduce((sum, item) => sum + item.total_price, 0);
                     const total = subtotal - state.discountAmount;
 
+                    const newEvent = {
+                        type: 'toggle_wholesale_mode',
+                        description: `Chuyển chế độ bán sỉ: ${newMode ? 'Bật' : 'Tắt'}`,
+                        time: new Date().toISOString(),
+                        valueDiff: totalValueChange
+                    };
+
+                    const newHighWaterMark = Math.max(state.sessionHighWaterMark || 0, total);
+
                     return {
                         wholesaleMode: newMode,
                         cartItems: newItems,
                         subtotal,
                         total,
                         change: state.cashReceived - total,
+                        sessionEvents: [...state.sessionEvents, newEvent],
+                        sessionHighWaterMark: newHighWaterMark,
                     };
                 });
             },
@@ -464,9 +715,13 @@ export const usePOSStore = create<POSState>()(
                     // Reuse logic from toggle? Or duplicate logic for clarity/safety?
                     // Let's duplicate to ensure "enabled" target is respected.
                     const newMode = enabled;
+                    let totalValueChange = 0;
+
                     const newItems = state.cartItems.map((item) => {
                         if (!item.selectedUnitId) {
                             let newPrice = item.unit_price;
+                            const oldItemTotalPrice = item.total_price;
+
                             if (newMode) {
                                 if (item.product.wholesale_price && item.product.wholesale_price > 0) {
                                     newPrice = item.product.wholesale_price;
@@ -475,10 +730,12 @@ export const usePOSStore = create<POSState>()(
                                 newPrice = item.product.selling_price;
                             }
                             if (newPrice !== item.unit_price) {
+                                const newItemTotalPrice = (item.quantity * newPrice) - item.discount_amount;
+                                totalValueChange += (newItemTotalPrice - oldItemTotalPrice);
                                 return {
                                     ...item,
                                     unit_price: newPrice,
-                                    total_price: (item.quantity * newPrice) - item.discount_amount,
+                                    total_price: newItemTotalPrice,
                                 };
                             }
                         }
@@ -488,12 +745,23 @@ export const usePOSStore = create<POSState>()(
                     const subtotal = newItems.reduce((sum, item) => sum + item.total_price, 0);
                     const total = subtotal - state.discountAmount;
 
+                    const newEvent = {
+                        type: 'set_wholesale_mode',
+                        description: `Đặt chế độ bán sỉ: ${newMode ? 'Bật' : 'Tắt'}`,
+                        time: new Date().toISOString(),
+                        valueDiff: totalValueChange
+                    };
+
+                    const newHighWaterMark = Math.max(state.sessionHighWaterMark || 0, total);
+
                     return {
                         wholesaleMode: newMode,
                         cartItems: newItems,
                         subtotal,
                         total,
                         change: state.cashReceived - total,
+                        sessionEvents: [...state.sessionEvents, newEvent],
+                        sessionHighWaterMark: newHighWaterMark,
                     };
                 });
             },
@@ -502,8 +770,39 @@ export const usePOSStore = create<POSState>()(
             clearCart: (reason?: string) => {
                 const state = get();
 
-                if (state.cartItems.length > 0) {
-                    // Log cart cleared
+                if (state.cartItems.length > 0 || state.removedItems.length > 0) {
+                    // Log Session Summary
+                    try {
+                        logOrderSessionSummary({
+                            orderId: state.currentOrder?.id || 'ABANDONED',
+                            sessionStartTime: state.sessionStartTime || new Date(),
+                            sessionEndTime: new Date(),
+                            maxPotentialValue: state.sessionHighWaterMark,
+                            finalValue: 0, // Cart cleared = 0 revenue
+                            removedItems: [
+                                ...state.removedItems,
+                                ...state.cartItems.map(item => ({
+                                    productName: item.product.name,
+                                    quantity: item.quantity,
+                                    unitPrice: item.unit_price,
+                                    totalPrice: item.total_price,
+                                    removedAt: new Date().toISOString(),
+                                    reason: reason || 'Xóa giỏ hàng'
+                                }))
+                            ],
+                            sessionEvents: state.sessionEvents || [],
+                            events: [...(state.sessionEvents || []), {
+                                type: 'clear_cart',
+                                description: `Xóa giỏ hàng (Reason: ${reason || 'Tạo mới'})`,
+                                time: new Date().toISOString(),
+                                valueDiff: -state.total
+                            }],
+                            shiftId: state.currentShiftId || undefined,
+                            userId: useAuthStore.getState().user?.id,
+                        });
+                    } catch (e) { console.error('Session Log failed', e); }
+
+                    // Log cart cleared (Legacy)
                     try {
                         logCartCleared({
                             items: state.cartItems.map((item) => ({
@@ -514,25 +813,56 @@ export const usePOSStore = create<POSState>()(
                             shiftId: state.currentShiftId || undefined,
                             orderId: state.currentOrder?.id,
                             userId: useAuthStore.getState().user?.id,
+                            lastPrintTime: state.lastPrintTime || undefined,
+                            switchCount: state.switchCount,
+                            events: [...(state.sessionEvents || []), {
+                                type: 'clear_cart_legacy',
+                                description: `Xóa giỏ hàng (Legacy Log, Reason: ${reason || 'Tạo mới'})`,
+                                time: new Date().toISOString(),
+                                valueDiff: -state.total
+                            }]
                         });
                     } catch (e) { console.error('Log failed', e); }
                 }
 
+                // Reset Session State
                 set({
                     cartItems: [],
+                    currentOrder: null,
+                    customer: null,
                     subtotal: 0,
-                    total: 0,
                     discountAmount: 0,
+                    total: 0,
                     change: 0,
                     cashReceived: 0,
                     paymentMethod: null,
-                    customer: null,
+                    sessionStartTime: null,
+                    lastPrintTime: null,
+                    sessionHighWaterMark: 0,
+                    removedItems: [],
+                    sessionEvents: [], // Reset events
+                    pointsUsed: 0,
+                    pointsDiscount: 0,
+                    taxRate: 0,
+                    taxAmount: 0,
+                    isEditMode: false,
                 });
             },
 
             // Set customer
             setCustomer: (customer: Customer | null) => {
-                set({ customer });
+                set((state) => {
+                    const newEvent = {
+                        type: 'set_customer',
+                        description: `Đặt khách hàng: ${customer?.name || 'Không có'}`,
+                        time: new Date().toISOString(),
+                        valueDiff: 0
+                    };
+                    return {
+                        customer,
+                        sessionEvents: [...state.sessionEvents, newEvent]
+                    };
+                });
             },
 
             // Load items from an existing order (for copy or edit functionality)
@@ -570,6 +900,13 @@ export const usePOSStore = create<POSState>()(
                     customer = customerStore.customers.find(c => c.id === order.customer_id) || order.customer || null;
                 }
 
+                const newEvent = {
+                    type: 'load_from_order',
+                    description: `Tải đơn hàng: ${order.order_number} (Chế độ chỉnh sửa: ${editMode})`,
+                    time: new Date().toISOString(),
+                    valueDiff: order.total_amount
+                };
+
                 set({
                     cartItems,
                     subtotal,
@@ -580,58 +917,126 @@ export const usePOSStore = create<POSState>()(
                     pointsDiscount: 0,
                     isEditMode: editMode,
                     currentOrder: editMode ? order : null,
+                    sessionStartTime: new Date(), // Start new session for loaded order
+                    sessionHighWaterMark: order.total_amount,
+                    sessionEvents: [newEvent],
+                    removedItems: [],
                 });
             },
 
             // Set discount
             setDiscount: (amount: number) => {
-                const s = get();
-                const newTotal = Math.max(0, s.subtotal - amount - s.pointsDiscount + s.taxAmount);
-                set({
-                    discountAmount: amount,
-                    total: Math.round(newTotal),
-                    change: Math.max(0, s.cashReceived - Math.round(newTotal)),
+                set((state) => {
+                    const oldDiscountAmount = state.discountAmount;
+                    const discountDiff = amount - oldDiscountAmount;
+                    const newTotal = Math.max(0, state.subtotal - amount - state.pointsDiscount + state.taxAmount);
+
+                    const newEvent = {
+                        type: 'set_discount',
+                        description: `Đặt giảm giá: ${amount} (Từ ${oldDiscountAmount})`,
+                        time: new Date().toISOString(),
+                        valueDiff: -discountDiff
+                    };
+
+                    const newHighWaterMark = Math.max(state.sessionHighWaterMark || 0, newTotal);
+
+                    return {
+                        discountAmount: amount,
+                        total: Math.round(newTotal),
+                        change: Math.max(0, state.cashReceived - Math.round(newTotal)),
+                        sessionEvents: [...state.sessionEvents, newEvent],
+                        sessionHighWaterMark: newHighWaterMark,
+                    };
                 });
             },
 
             setPointsDiscount: (points: number, amount: number) => {
-                const s = get();
-                const newTotal = Math.max(0, s.subtotal - s.discountAmount - amount + s.taxAmount);
-                set({
-                    pointsUsed: points,
-                    pointsDiscount: amount,
-                    total: Math.round(newTotal),
-                    change: Math.max(0, s.cashReceived - Math.round(newTotal)),
+                set((state) => {
+                    const oldPointsDiscount = state.pointsDiscount;
+                    const discountDiff = amount - oldPointsDiscount;
+                    const newTotal = Math.max(0, state.subtotal - state.discountAmount - amount + state.taxAmount);
+
+                    const newEvent = {
+                        type: 'set_points_discount',
+                        description: `Đặt giảm giá điểm: ${amount} (Điểm: ${points})`,
+                        time: new Date().toISOString(),
+                        valueDiff: -discountDiff
+                    };
+
+                    const newHighWaterMark = Math.max(state.sessionHighWaterMark || 0, newTotal);
+
+                    return {
+                        pointsUsed: points,
+                        pointsDiscount: amount,
+                        total: Math.round(newTotal),
+                        change: Math.max(0, state.cashReceived - Math.round(newTotal)),
+                        sessionEvents: [...state.sessionEvents, newEvent],
+                        sessionHighWaterMark: newHighWaterMark,
+                    };
                 });
             },
 
             setTaxRate: (rate: number) => {
-                const state = get();
-                const subtotal = state.subtotal;
-                const discount = state.discountAmount;
-                const taxRate = rate;
-                const taxAmount = (subtotal - discount) * (taxRate / 100);
-                const total = Math.max(0, subtotal - discount + taxAmount);
+                set((state) => {
+                    const subtotal = state.subtotal;
+                    const discount = state.discountAmount;
+                    const taxRate = rate;
+                    const taxAmount = (subtotal - discount) * (taxRate / 100);
+                    const total = Math.max(0, subtotal - discount + taxAmount);
 
-                set({
-                    taxRate,
-                    taxAmount,
-                    total,
-                    change: Math.max(0, state.cashReceived - total),
+                    const taxAmountDiff = taxAmount - state.taxAmount;
+
+                    const newEvent = {
+                        type: 'set_tax_rate',
+                        description: `Đặt thuế suất: ${rate}%`,
+                        time: new Date().toISOString(),
+                        valueDiff: taxAmountDiff
+                    };
+
+                    const newHighWaterMark = Math.max(state.sessionHighWaterMark || 0, total);
+
+                    return {
+                        taxRate,
+                        taxAmount,
+                        total,
+                        change: Math.max(0, state.cashReceived - total),
+                        sessionEvents: [...state.sessionEvents, newEvent],
+                        sessionHighWaterMark: newHighWaterMark,
+                    };
                 });
             },
 
             // Set payment method
             setPaymentMethod: (method: PaymentMethod) => {
-                set({ paymentMethod: method });
+                set((state) => {
+                    const newEvent = {
+                        type: 'set_payment_method',
+                        description: `Đặt phương thức thanh toán: ${method}`,
+                        time: new Date().toISOString(),
+                        valueDiff: 0
+                    };
+                    return {
+                        paymentMethod: method,
+                        sessionEvents: [...state.sessionEvents, newEvent]
+                    };
+                });
             },
 
             // Set cash received
             setCashReceived: (amount: number) => {
-                set((state) => ({
-                    cashReceived: amount,
-                    change: amount - state.total,
-                }));
+                set((state) => {
+                    const newEvent = {
+                        type: 'set_cash_received',
+                        description: `Đặt tiền mặt nhận: ${amount}`,
+                        time: new Date().toISOString(),
+                        valueDiff: 0
+                    };
+                    return {
+                        cashReceived: amount,
+                        change: amount - state.total,
+                        sessionEvents: [...state.sessionEvents, newEvent]
+                    };
+                });
             },
 
             // Park order
@@ -640,8 +1045,11 @@ export const usePOSStore = create<POSState>()(
 
                 if (state.cartItems.length === 0) return;
 
+                const { branchId } = useAuthStore.getState();
+
                 const draft = {
                     id: generateId(),
+                    branchId: branchId || undefined,
                     timestamp: new Date().toISOString(),
                     note,
                     order: {
@@ -654,6 +1062,19 @@ export const usePOSStore = create<POSState>()(
                     },
                     items: [...state.cartItems],
                     customer: state.customer,
+                    removedItems: state.removedItems || [],
+                    sessionEvents: state.sessionEvents || [],
+                    sessionStartTime: state.sessionStartTime,
+                    sessionHighWaterMark: state.sessionHighWaterMark,
+                    lastPrintTime: state.lastPrintTime,
+                    switchCount: state.switchCount
+                };
+
+                const newEvent = {
+                    type: 'park_order',
+                    description: `Lưu đơn chờ: ${draft.id} (Ghi chú: ${note || 'Không có'})`,
+                    time: new Date().toISOString(),
+                    valueDiff: -state.total // Value removed from active cart
                 };
 
                 set((state) => ({
@@ -670,6 +1091,10 @@ export const usePOSStore = create<POSState>()(
                     change: 0,
                     paymentMethod: null,
                     isSubmitting: false,
+                    sessionStartTime: null,
+                    sessionHighWaterMark: 0,
+                    removedItems: [],
+                    sessionEvents: [...state.sessionEvents, newEvent], // Add event to current session before clearing
                 }));
             },
 
@@ -684,6 +1109,13 @@ export const usePOSStore = create<POSState>()(
                     get().parkOrder();
                 }
 
+                const newEvent = {
+                    type: 'resume_order',
+                    description: `Tiếp tục đơn chờ: ${draft.id}`,
+                    time: new Date().toISOString(),
+                    valueDiff: draft.order.total_amount // Value restored to active cart
+                };
+
                 set((state) => ({
                     draftOrders: state.draftOrders.filter(d => d.id !== id),
                     cartItems: draft.items,
@@ -692,6 +1124,12 @@ export const usePOSStore = create<POSState>()(
                     subtotal: draft.order.subtotal || 0,
                     discountAmount: draft.order.discount_amount || 0,
                     total: draft.order.total_amount || 0,
+                    sessionStartTime: draft.sessionStartTime || new Date(),
+                    sessionHighWaterMark: draft.sessionHighWaterMark || draft.order.total_amount || 0,
+                    lastPrintTime: draft.lastPrintTime || null,
+                    switchCount: draft.switchCount || 0,
+                    removedItems: draft.removedItems || [],
+                    sessionEvents: [...(draft.sessionEvents || []), newEvent], // Restore and add new event
                 }));
             },
 
@@ -701,13 +1139,30 @@ export const usePOSStore = create<POSState>()(
                 const draft = state.draftOrders.find(d => d.id === id);
 
                 if (draft) {
+                    const newEvent = {
+                        type: 'delete_draft_order',
+                        description: `Xóa đơn chờ: ${id} (Lý do: ${reason})`,
+                        time: new Date().toISOString(),
+                        valueDiff: -(draft.order.total_amount || 0) // Value lost from potential sale
+                    };
+
                     try {
-                        logCartCleared({
-                            items: draft.items.map(item => ({ product: item.product, item })),
-                            reason: `Hủy đơn chờ (ID: ${id}) - ${reason}`,
+                        logDraftDeleted({
+                            orderId: id,
+                            note: draft.note,
+                            totalAmount: draft.order.total_amount,
                             shiftId: state.currentShiftId || undefined,
-                            orderId: String(draft.order.id || ''),
                             userId: useAuthStore.getState().user?.id,
+                            events: [...(draft.sessionEvents || []), newEvent],
+                            lastPrintTime: draft.lastPrintTime,
+                            switchCount: draft.switchCount,
+                            // Include items so they show in security log
+                            items: draft.items.map(item => ({
+                                productName: item.product?.name || 'Sản phẩm',
+                                quantity: item.quantity,
+                                unitPrice: item.unit_price,
+                                totalPrice: item.total_price
+                            }))
                         });
                     } catch (e) { console.error('Log failed', e); }
                 }
@@ -733,7 +1188,7 @@ export const usePOSStore = create<POSState>()(
             // ==================
             submitOrder: async (orderData) => {
                 const state = get();
-                const { user } = useAuthStore.getState();
+                const { user, brandId, branchId } = useAuthStore.getState();
                 const { users } = useUserStore.getState();
                 const currentUserProfile = users.find(u => u.id === user?.id);
 
@@ -762,8 +1217,21 @@ export const usePOSStore = create<POSState>()(
                     const tax = state.taxAmount;
                     const total = state.total;
 
+                    // Validate brandId and branchId - must be valid UUIDs
+                    if (!brandId || brandId.length < 10) {
+                        throw new Error('Vui lòng chọn Thương hiệu (Brand) trước khi tạo đơn hàng');
+                    }
+                    if (!branchId || branchId.length < 10) {
+                        throw new Error('Vui lòng chọn Chi nhánh (Branch) trước khi tạo đơn hàng');
+                    }
+
+                    // Validate seller_id is a valid UUID format or set to undefined
+                    const validSellerId = (user?.id && user.id.length > 10) ? user.id : undefined;
+
                     const order: Order = {
                         id: orderId,
+                        brand_id: brandId,
+                        branch_id: branchId,
                         created_at: createdAt,
                         updated_at: now, // Always update updated_at
                         order_number: orderNumber,
@@ -803,12 +1271,12 @@ export const usePOSStore = create<POSState>()(
                         debt_amount: orderData?.paymentSplit?.debt || (state.paymentMethod === 'debt' ? total : 0),
                         provisional_printed: false,
                         receipt_printed: false,
-                        created_by: user?.id,
+                        created_by: validSellerId,
                         completed_at: (orderData?.status || 'completed') === 'completed' ? now : undefined,
                         notes: orderData?.note || undefined,
-                        // Seller tracking (Phase 2)
-                        seller_id: user?.id || currentUserProfile?.id,
-                        seller_name: currentUserProfile?.full_name || 'Nhân viên'
+                        // Seller tracking - only set if valid UUID
+                        seller_id: validSellerId,
+                        seller_name: currentUserProfile?.full_name || undefined
                     };
 
                     const orderItems = state.cartItems.map(item => ({
@@ -944,7 +1412,8 @@ export const usePOSStore = create<POSState>()(
                                 points_balance: newPoints,
                                 total_spent: (state.customer.total_spent || 0) + total,
                                 total_orders: (state.customer.total_orders || 0) + 1,
-                                debt_balance: newDebt
+                                debt_balance: newDebt,
+                                last_purchase_at: now  // Cập nhật thời gian mua hàng gần nhất
                             });
 
                             // Record points transactions in loyaltyStore for activity log
@@ -1003,6 +1472,27 @@ export const usePOSStore = create<POSState>()(
                         useOrderStore.getState().addOrder(order);
                     }
 
+                    // Log Successful Session Summary (Phase 8)
+                    try {
+                        logOrderSessionSummary({
+                            orderId: order.id,
+                            sessionStartTime: state.sessionStartTime || new Date(),
+                            sessionEndTime: new Date(),
+                            maxPotentialValue: state.sessionHighWaterMark,
+                            finalValue: order.total_amount,
+                            removedItems: state.removedItems || [],
+                            sessionEvents: state.sessionEvents || [],
+                            events: [...(state.sessionEvents || []), {
+                                type: 'submit_order',
+                                description: `Thanh toán đơn hàng ${order.order_number}`,
+                                time: new Date().toISOString(),
+                                valueDiff: 0
+                            }],
+                            shiftId: state.currentShiftId || undefined,
+                            userId: useAuthStore.getState().user?.id,
+                        });
+                    } catch (e) { console.error('Session Log failed', e); }
+
                     // Clear Cart
                     set({
                         cartItems: [],
@@ -1019,7 +1509,12 @@ export const usePOSStore = create<POSState>()(
                         change: 0,
                         paymentMethod: null,
                         isSubmitting: false,
-                        isEditMode: false
+                        isEditMode: false,
+                        sessionStartTime: null,
+                        lastPrintTime: null,
+                        sessionHighWaterMark: 0,
+                        removedItems: [],
+                        sessionEvents: [],
                     });
 
                     return order;
@@ -1046,7 +1541,7 @@ export const usePOSStore = create<POSState>()(
                 })),
                 currentOrder: state.currentOrder,
                 customer: state.customer,
-                draftOrders: state.draftOrders.map(draft => ({
+                draftOrders: state.draftOrders.slice(0, 10).map(draft => ({ // Limit to 10 drafts
                     ...draft,
                     items: draft.items.map(item => ({
                         ...item,
@@ -1055,8 +1550,25 @@ export const usePOSStore = create<POSState>()(
                             image_url: undefined,
                             images: undefined
                         } : item.product
-                    }))
-                }))
+                    })),
+                    // Exclude session events from draft storage
+                    sessionEvents: undefined,
+                    removedItems: undefined
+                })),
+                // Persist financial state to prevent "0 total" on refresh
+                subtotal: state.subtotal,
+                discountAmount: state.discountAmount,
+                pointsUsed: state.pointsUsed,
+                pointsDiscount: state.pointsDiscount,
+                taxRate: state.taxRate,
+                taxAmount: state.taxAmount,
+                total: state.total,
+                cashReceived: state.cashReceived,
+                change: state.change,
+                paymentMethod: state.paymentMethod,
+                wholesaleMode: state.wholesaleMode
+                // NOTE: sessionEvents, removedItems, sessionHighWaterMark are NOT persisted
+                // They are session-only and will be logged to Supabase, not localStorage
             })
         }
     )

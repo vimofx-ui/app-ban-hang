@@ -2,6 +2,8 @@
 // POS PAGE - Multi-Order Tabs, Enhanced UX, Security Logging
 // =============================================================================
 
+import { logPrintProvisional } from '@/lib/ghostScan';
+
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { usePOSStore, type CartItem } from '@/stores/posStore';
@@ -16,6 +18,8 @@ import { useCategoryStore } from '@/stores/categoryStore';
 import { useAuthStore } from '@/stores/authStore';
 import { useOfflineStore } from '@/stores/offlineStore';
 import { useBarcodeScanner } from '@/hooks/useBarcodeScanner';
+import { usePOSScanner } from '@/hooks/usePOSScanner';
+import { usePOSCart } from '@/hooks/usePOSCart';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { CustomerModal } from '@/components/customers/CustomerModal';
 import { BarcodeSelectionModal, findProductsByBarcode, type BarcodeMatch } from '@/components/common/BarcodeSelectionModal';
@@ -28,6 +32,15 @@ import { POSAudio } from '@/lib/posAudio';
 import { CurrencyInput } from '@/components/common/CurrencyInput';
 import { OrderLookupModal, CustomerLookupModal } from '@/components/pos/LookupModals';
 import { usePrint } from '@/hooks/usePrint';
+import { SavedOrdersDrawer } from '@/components/orders/SavedOrdersDrawer';
+import { BarcodeScannerModal } from '@/components/common/BarcodeScannerModal';
+import { POSTabs } from '@/components/pos/POSTabs';
+import { POSCartList } from '@/components/pos/POSCartList';
+import { POSProductList } from '@/components/pos/POSProductList';
+import { POSCustomerSection } from '@/components/pos/POSCustomerSection';
+import { POSPaymentPanel } from '@/components/pos/POSPaymentPanel';
+import type { OrderTab } from '@/types/pos';
+import type { Category } from '@/stores/categoryStore';
 
 // Helper to determine emoji
 const getProductEmoji = (name?: string) => {
@@ -43,43 +56,16 @@ const getProductEmoji = (name?: string) => {
     return '📦';
 };
 
-interface OrderTab {
-    id: string;
-    label: string;
-    items: CartItem[];
-    customer: Customer | null;
-    note: string;
-}
+
 
 export function POSPage() {
     const navigate = useNavigate();
 
     // Refs for click outside handling
-    const dropdownRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLInputElement>(null);
-
-    useEffect(() => {
-        function handleClickOutside(event: MouseEvent) {
-            if (
-                dropdownRef.current &&
-                !dropdownRef.current.contains(event.target as Node) &&
-                inputRef.current &&
-                !inputRef.current.contains(event.target as Node)
-            ) {
-                setShowCustomerDropdown(false);
-            }
-        }
-
-        document.addEventListener('mousedown', handleClickOutside);
-        return () => {
-            document.removeEventListener('mousedown', handleClickOutside);
-        };
-    }, []);
     const [productPanelHeight, setProductPanelHeight] = useState(300); // Default height for product panel
     const [searchQuery, setSearchQuery] = useState('');
     const [showSearchDropdown, setShowSearchDropdown] = useState(false);
-    const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
-    const [customerSearch, setCustomerSearch] = useState('');
     // selectedCustomer state removed
     const [usePoints, setUsePoints] = useState(false);
     const [pointsToUse, setPointsToUse] = useState(0);
@@ -87,20 +73,15 @@ export function POSPage() {
     // --- LOCAL STATE RESTORED ---
     const [orderNote, setOrderNote] = useState('');
     const [showMobilePayment, setShowMobilePayment] = useState(false);
-    const [filteredCustomers, setFilteredCustomers] = useState<Customer[]>([]);
 
 
 
 
     const [showNoteModal, setShowNoteModal] = useState(false);
-    const [editingItem, setEditingItem] = useState<CartItem | null>(null);
-    const [priceAdjustmentItem, setPriceAdjustmentItem] = useState<CartItem | null>(null);
-    const [priceAdjust, setPriceAdjust] = useState({ mode: 'percent' as 'percent' | 'amount' | 'custom', value: 0, reason: '', note: '' });
-    const [showNumpad, setShowNumpad] = useState(false);
-    const [itemDiscount, setItemDiscount] = useState({ type: 'percent' as 'percent' | 'amount', value: 0 });
+    // State moved to usePOSCart: editingItem, priceAdjustmentItem, priceAdjust, showNumpad, itemDiscount
     const [manualCash, setManualCash] = useState('');
     const [showCloseConfirm, setShowCloseConfirm] = useState<number | null>(null);
-    const [tempDiscount, setTempDiscount] = useState({ type: 'percent', value: 0 }); // For global discount
+    const [tempDiscount, setTempDiscount] = useState<{ type: DiscountType, value: number }>({ type: 'percent', value: 0 }); // For global discount
     const searchInputRef = useRef<HTMLInputElement>(null);
     const [showDraftsList, setShowDraftsList] = useState(false);
     const [showNewOrderConfirm, setShowNewOrderConfirm] = useState(false);
@@ -112,9 +93,8 @@ export function POSPage() {
     const [showAddCustomerModal, setShowAddCustomerModal] = useState(false);
     const [showEditCustomerModal, setShowEditCustomerModal] = useState(false);
     const [initialPhone, setInitialPhone] = useState('');
+    const [showScanner, setShowScanner] = useState(false); // Camera scanner modal
     const [scannerMode, setScannerMode] = useState(true); // Barcode scanner mode toggle - default ON
-    const [barcodeMatches, setBarcodeMatches] = useState<BarcodeMatch[]>([]); // For barcode selection modal
-    const [barcodeError, setBarcodeError] = useState<string | null>(null); // For barcode error notification
     const [isFullscreen, setIsFullscreen] = useState(false);
     const [isOnline, setIsOnline] = useState(navigator.onLine);
     const [showCategorySettings, setShowCategorySettings] = useState(false);
@@ -123,14 +103,7 @@ export function POSPage() {
 
 
     // Multi-payment state
-    const [paymentSplit, setPaymentSplit] = useState<{
-        cash: number;
-        transfer: number;
-        card: number;
-        debt: number;
-        points: number;
-        [key: string]: number; // For custom payment methods
-    }>({ cash: 0, transfer: 0, card: 0, debt: 0, points: 0 });
+    const [paymentSplit, setPaymentSplit] = useState<POSPaymentSplit>({ cash: 0, transfer: 0, card: 0, debt: 0, points: 0 });
 
     const [orderTabs, setOrderTabs] = useState<OrderTab[]>([{ id: '1', label: 'Đơn 1', items: [], customer: null, note: '' }]);
     const [activeTabIndex, setActiveTabIndex] = useState(0);
@@ -139,20 +112,28 @@ export function POSPage() {
     const {
         cartItems, addItem, addItemWithUnit, removeItem, updateItemQuantity, clearCart,
         customer, setCustomer,
-        // orderNote is local state
         subtotal, total, discountAmount, setDiscount, taxAmount, taxRate, setTaxRate,
         cashReceived, setCashReceived, change,
         submitOrder, parkOrder, draftOrders, deleteDraftOrder, resumeOrder,
         paymentMethod, setPaymentMethod, updateItemUnit,
         isSubmitting, updateItemNote, updateItemDiscount, setPointsDiscount, updateItemPrice,
-        wholesaleMode, toggleWholesaleMode, setWholesaleMode
+        wholesaleMode, toggleWholesaleMode, setWholesaleMode, setLastPrintTime
     } = usePOSStore();
+
+    // Custom Hooks
+    const {
+        editingItem, setEditingItem,
+        priceAdjustmentItem, setPriceAdjustmentItem,
+        priceAdjust, setPriceAdjust,
+        itemDiscount, setItemDiscount,
+        handleQuantityChange,
+        handleUnitChange,
+        handlePriceAdjustmentRequest,
+        handleEditRequest
+    } = usePOSCart();
 
     // Direct alias since addItem now handles wholesale logic
     const addToCart = addItem;
-
-
-
     const finalTotal = total;
     const changeDue = change;
     const setTax = setTaxRate;
@@ -181,7 +162,17 @@ export function POSPage() {
     const { products, loadProducts } = useProductStore();
     const { customers, loadCustomers } = useCustomerStore();
     const { currentShift, updateShiftTotals } = useShiftStore();
-    const { isMobile, isTablet } = useBreakpoint();
+    const { isMobile, isTablet, width } = useBreakpoint();
+    // Custom breakpoint for Tablet Landscape (1280x720) optimization
+    // Applies when width is between 1024 and 1280 (inclusive)
+    const isTabletLandscape = width >= 1024 && width <= 1280;
+
+    // Auto-redirect mobile users to dedicated MobilePOS page for better UX
+    useEffect(() => {
+        if (isMobile && width < 768) {
+            navigate('/mobile-pos', { replace: true });
+        }
+    }, [isMobile, width, navigate]);
 
     // Category settings with safe defaults for migration
     const { categories } = useCategoryStore();
@@ -265,7 +256,7 @@ export function POSPage() {
     const handleLogout = useCallback(async () => {
         if (confirm('Bạn có chắc muốn đăng xuất?')) {
             await logout();
-            navigate('/login');
+            navigate('/dang-nhap');
         }
     }, [logout, navigate]);
 
@@ -390,23 +381,6 @@ export function POSPage() {
         });
     }, [products, selectedCategory, posCategories.customLists]);
 
-    const searchCustomers = useCallback((query: string) => {
-        if (!query) {
-            setFilteredCustomers(customers);
-        } else {
-            const lower = query.toLowerCase();
-            setFilteredCustomers(customers.filter(c => c.name.toLowerCase().includes(lower) || c.phone?.includes(query))); // Fixed c.phone check
-        }
-    }, [customers]);
-
-    // Sync filters when data changes
-    useEffect(() => { setFilteredProducts(searchProducts(products, searchQuery)); }, [products, searchQuery]);
-    useEffect(() => { setFilteredCustomers(customers); }, [customers]);
-
-    // Search effects
-    useEffect(() => { filterProducts(searchQuery); }, [searchQuery, filterProducts]);
-    useEffect(() => { searchCustomers(customerSearch); }, [customerSearch, searchCustomers]);
-
     const handleProductClick = (item: ProductSearchItem) => {
         console.log('>>> handleProductClick CALLED with:', item.name);
 
@@ -429,70 +403,22 @@ export function POSPage() {
     };
 
 
-    const handleBarcodeScan = (code: string) => {
-        // FIRST: Blur any focused element to prevent accidental re-triggering
-        if (document.activeElement instanceof HTMLElement) {
-            document.activeElement.blur();
-        }
+    // Use extracted POS Scanner hook
+    const {
+        barcodeMatches,
+        setBarcodeMatches,
+        barcodeError,
+        setBarcodeError,
+        handleBarcodeSelect,
+        handleBarcodeScan
+    } = usePOSScanner({
+        products,
+        addToCart,
+        addItemWithUnit,
+        setSearchQuery,
+        setShowSearchDropdown
+    });
 
-        // Clear search input immediately when scanner detects a barcode
-        setSearchQuery('');
-        setShowSearchDropdown(false);
-
-        // Find all products/units matching this barcode
-        const matches = findProductsByBarcode(products, code);
-
-        if (matches.length === 0) {
-            // No match - play error sound and show notification only
-            POSAudio.playError();
-            setBarcodeError(`⚠️ Mã "${code}" không tồn tại!`);
-            setTimeout(() => setBarcodeError(null), 3000); // Auto hide after 3s
-            console.log(`[SCANNER] ❌ Not found: ${code}`);
-        } else if (matches.length === 1) {
-            // Single match - add directly to cart
-            const match = matches[0];
-            if (match.unit) {
-                addItemWithUnit(
-                    match.product,
-                    1,
-                    match.displayUnit,
-                    match.price,
-                    match.unit.conversion_rate,
-                    match.unit.id
-                );
-            } else {
-                addToCart(match.product);
-            }
-            // Play success sound
-            POSAudio.playAddItem();
-            console.log(`[SCANNER] ✅ Added: ${match.displayName} (${match.displayUnit})`);
-        } else {
-            // Multiple matches - show selection modal
-            setBarcodeMatches(matches);
-            console.log(`[SCANNER] 📌 Multiple matches (${matches.length}) for: ${code}`);
-        }
-    };
-
-    // Handle barcode selection from modal
-    const handleBarcodeSelect = (match: BarcodeMatch) => {
-        if (match.unit) {
-            addItemWithUnit(
-                match.product,
-                1,
-                match.displayUnit,
-                match.price,
-                match.unit.conversion_rate,
-                match.unit.id
-            );
-        } else {
-            addToCart(match.product);
-        }
-        setBarcodeMatches([]);
-        // Play success sound using POSAudio
-        POSAudio.playAddItem();
-    };
-
-    useBarcodeScanner({ onScan: handleBarcodeScan });
 
     // === PHASE 1: Default payment method = cash ===
     useEffect(() => {
@@ -556,8 +482,6 @@ export function POSPage() {
                     // Close dropdowns or clear search
                     if (showSearchDropdown) {
                         setShowSearchDropdown(false);
-                    } else if (showCustomerDropdown) {
-                        setShowCustomerDropdown(false);
                     } else if (searchQuery) {
                         setSearchQuery('');
                     }
@@ -570,7 +494,7 @@ export function POSPage() {
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [cartItems.length, isSubmitting, submitOrder, showSearchDropdown, showCustomerDropdown, searchQuery, toggleFullscreen, paymentMethod, customer, pointsToUse, loyalty, orderNote, paymentSplit, setPointsDiscount]);
+    }, [cartItems.length, isSubmitting, submitOrder, showSearchDropdown, searchQuery, toggleFullscreen, paymentMethod, customer, pointsToUse, loyalty, orderNote, paymentSplit, setPointsDiscount]);
 
     // NOTE: Click-outside handler REMOVED - it was closing dropdowns immediately
     // Dropdowns will close via:
@@ -587,6 +511,8 @@ export function POSPage() {
             items: usePOSStore.getState().cartItems,
             customer: usePOSStore.getState().customer,
             note: orderNote, // Use local state
+            lastPrintTime: usePOSStore.getState().lastPrintTime,
+            switchCount: usePOSStore.getState().switchCount,
         };
         return updatedTabs;
     };
@@ -607,6 +533,12 @@ export function POSPage() {
         if (tab.customer) usePOSStore.setState({ customer: tab.customer });
         if (tab.note) setOrderNote(tab.note); // Use local state setter
 
+        // Load Risk State
+        usePOSStore.setState({
+            lastPrintTime: tab.lastPrintTime || null,
+            switchCount: tab.switchCount || 0
+        });
+
         // 3. Recalculate totals (implicitly handled by store subscriptions or next render, 
         // but explicit action might be safer if store has computed properties)
     };
@@ -619,8 +551,12 @@ export function POSPage() {
         const tabsWithSavedState = saveCurrentTabState(orderTabs, activeTabIndex);
         setOrderTabs(tabsWithSavedState);
 
+        // Increment switch count for target tab (Risk Analysis)
+        const targetTab = tabsWithSavedState[index];
+        targetTab.switchCount = (targetTab.switchCount || 0) + 1;
+
         // Load new work
-        loadTabState(tabsWithSavedState[index]);
+        loadTabState(targetTab);
         setActiveTabIndex(index);
     };
 
@@ -642,7 +578,9 @@ export function POSPage() {
             label: `Đơn ${newIdStr}`,
             items: [],
             customer: null,
-            note: ''
+            note: '',
+            lastPrintTime: null,
+            switchCount: 0
         };
 
         // Append new tab at the end (rightmost position)
@@ -771,11 +709,7 @@ export function POSPage() {
         setCashReceived(num);
     };
 
-    // Update quantity directly
-    const handleQuantityChange = (itemId: string, newQty: number) => {
-        if (newQty <= 0) removeItem(itemId);
-        else updateItemQuantity(itemId, newQty);
-    };
+    // Local handleQuantityChange moved to usePOSCart
 
     useEffect(() => { searchInputRef.current?.focus(); }, []);
 
@@ -806,8 +740,121 @@ export function POSPage() {
         setShowNewOrderConfirm(false);
     };
 
+    const handlePrintProvisional = async () => {
+        if (cartItems.length === 0) return;
+
+        // Generate temporary order object for printing
+        const tempOrder: any = {
+            id: 'PROVISIONAL',
+            order_number: 'TẠM TÍNH',
+            created_at: new Date().toISOString(),
+            customer: customer || undefined,
+            order_items: cartItems.map(item => ({
+                product: item.product,
+                quantity: item.quantity,
+                unit_price: item.unit_price,
+                unit_name: item.unitName || item.product.base_unit
+            })),
+            total_amount: total,
+            discount_amount: discountAmount,
+            final_amount: total - discountAmount,
+            payment_method: paymentMethod,
+            points_earned: loyalty && customer ? Math.floor(total / (loyalty.pointsPerAmount || 10000)) : 0,
+            customer_id: customer?.id
+        };
+
+        await printProvisionalReceipt(tempOrder, user?.name || user?.email || 'Thu ngân');
+
+        // Log to Ghost Scan
+        logPrintProvisional({
+            orderId: 'PROVISIONAL',
+            itemsCount: cartItems.length,
+            totalAmount: total,
+            shiftId: currentShift?.id,
+            userId: user?.id
+        });
+
+        setLastPrintTime(new Date());
+        usePOSStore.getState().setLastPrintTime(new Date()); // Update store for tracking
+    };
+
+    const handlePaymentSubmit = async () => {
+        console.log('Payment button clicked!', { cartItems: cartItems.length, isSubmitting, paymentMethod });
+        if (cartItems.length === 0) {
+            alert('Giỏ hàng trống! Vui lòng thêm sản phẩm.');
+            return;
+        }
+        if (paymentMethod === 'debt' && !customer) {
+            alert('Vui lòng chọn khách hàng để ghi nợ!');
+            return;
+        }
+        try {
+            console.log('Calling submitOrder...');
+
+            // Validation for Delivery Mode
+            if (isDeliveryMode) {
+                if (!deliveryInfo.recipient_name || !deliveryInfo.recipient_phone || !deliveryInfo.shipping_address) {
+                    alert('Vui lòng nhập đầy đủ: Tên, SĐT và Địa chỉ người nhận!');
+                    return;
+                }
+            }
+
+            // Set points discount before submitting
+            if (pointsToUse > 0 && loyalty) {
+                setPointsDiscount(pointsToUse, pointsToUse * (loyalty.redemptionRate || 1000));
+            }
+
+            // Prepare submit options
+            const submitOptions = isDeliveryMode ? {
+                status: 'pending_approval' as const,
+                is_delivery: true,
+                delivery_info: deliveryInfo,
+                note: orderNote,
+                paymentSplit
+            } : {
+                note: orderNote,
+                paymentSplit
+            };
+
+            const order = await submitOrder(submitOptions);
+            console.log('submitOrder result:', order);
+            if (!order) {
+                alert('Lỗi: Không thể lưu đơn hàng. Vui lòng thử lại!');
+            } else {
+                // Success - no alert, just clear form
+                setManualCash('');
+                setPointsToUse(0);
+                setOrderNote('');
+                setWholesaleMode(false); // Reset wholesale mode for next order
+                setIsDeliveryMode(false); // Reset delivery mode
+                setDeliveryInfo({ recipient_name: '', recipient_phone: '', shipping_address: '', delivery_notes: '' }); // Reset delivery info
+                // Reset payment split
+                setPaymentSplit({ cash: 0, transfer: 0, card: 0, debt: 0, points: 0 });
+
+                // Print receipt if checkbox checked
+                if (shouldPrintReceipt) {
+                    printSalesReceipt(order, user?.name || user?.email || 'Thu ngân');
+                }
+            }
+        } catch (e: any) {
+            console.error('Payment error:', e);
+            alert('Lỗi hệ thống: ' + (e.message || JSON.stringify(e)));
+        }
+    };
+
     return (
         <>
+            {showScanner && (
+                <BarcodeScannerModal
+                    onScan={(code) => {
+                        handleBarcodeScan(code);
+                        setShowScanner(false);
+                    }}
+                    onClose={() => setShowScanner(false)}
+                    title="Quét sản phẩm"
+                />
+            )}
+
             <div className="h-screen w-screen flex flex-col bg-slate-100 overflow-hidden">
                 {/* Barcode Error Notification - Animated overlay */}
                 {barcodeError && (
@@ -829,7 +876,11 @@ export function POSPage() {
 
                 {/* Top Bar - Green Theme */}
                 <div className="h-14 bg-gradient-to-r from-green-600 via-green-600 to-green-700 flex items-center px-3 md:px-4 gap-2 md:gap-4 text-white flex-shrink-0 shadow-lg relative z-50">
-                    <button onClick={() => navigate('/')} className="hover:bg-white/20 p-2 rounded-lg" title="Về trang chủ (Home)">
+                    <button
+                        onClick={() => navigate('/')}
+                        className={cn("hover:bg-white/20 p-2 rounded-lg", isTabletLandscape && "hidden")}
+                        title="Về trang chủ (Home)"
+                    >
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                             <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
                             <polyline points="9 22 9 12 15 12 15 22" />
@@ -840,21 +891,39 @@ export function POSPage() {
                     <div className="flex items-center gap-2">
                         <button
                             onClick={handleNewOrder}
-                            className="hidden md:flex bg-red-500 hover:bg-red-600 text-white px-3 py-2 rounded-lg text-sm font-medium items-center gap-1 shadow-sm transition-colors"
+                            className={cn(
+                                "hidden md:flex bg-red-500 hover:bg-red-600 text-white px-3 py-2 rounded-lg text-sm font-medium items-center gap-1 shadow-sm transition-colors",
+                                isTabletLandscape && "!hidden" // Force hide on Tablet Landscape to override md:flex
+                            )}
                             title="Tạo đơn mới (Xóa giỏ hàng hiện tại)"
                         >
                             <span>✨</span> <span className="hidden lg:inline">Tạo mới</span>
                         </button>
 
                         <button
-                            onClick={() => setShowDraftsList(true)}
-                            className="relative bg-white/20 hover:bg-white/30 text-white px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-1 transition-colors"
+                            onClick={() => setShowDraftsList(prev => !prev)}
+                            className={cn(
+                                "relative bg-white/20 hover:bg-white/30 text-white px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-1 transition-colors",
+                                isTabletLandscape && "bg-transparent hover:bg-transparent px-0 py-0" // Remove button styling on Tablet
+                            )}
                             title="Danh sách đơn đang chờ"
                         >
-                            <span>📋</span> <span className="hidden lg:inline">Đơn chờ</span>
+                            {/* Icon: Use SVG for customizable color (white) instead of emoji */}
+                            {isTabletLandscape ? (
+                                <svg xmlns="http://www.w3.org/2000/svg" className="w-9 h-9 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+                                </svg>
+                            ) : (
+                                <span className="text-xl">📋</span>
+                            )}
+
+                            <span className={cn("hidden lg:inline", isTabletLandscape && "!hidden")}>Đơn chờ</span> {/* Text hidden on Tablet */}
                             {/* Draft orders badge */}
                             {draftOrders.length > 0 && (
-                                <span className="absolute -top-1 -right-1 bg-amber-500 text-white text-[10px] w-4 h-4 rounded-full flex items-center justify-center font-bold">
+                                <span className={cn(
+                                    "absolute text-white text-[10px] w-4 h-4 rounded-full flex items-center justify-center font-bold",
+                                    isTabletLandscape ? "-top-1 -right-2 w-5 h-5 text-xs bg-amber-500 border-2 border-green-600" : "-top-1 -right-1 bg-amber-500"
+                                )}>
                                     {draftOrders.length}
                                 </span>
                             )}
@@ -879,12 +948,19 @@ export function POSPage() {
                                 }`}
                             title={wholesaleMode ? 'Đang bật giá bán buôn (cho đơn này)' : 'Bấm để bật giá bán buôn'}
                         >
-                            <span>📦</span> <span className="hidden lg:inline">{wholesaleMode ? 'Bán buôn ✓' : 'Bán buôn'}</span>
+                            {/* Dollar Icon - customizable color */}
+                            <svg xmlns="http://www.w3.org/2000/svg" className={cn("w-5 h-5", wholesaleMode ? "text-white" : "text-gray-300")} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                            <span className={cn("hidden lg:inline", isTabletLandscape && "hidden")}>{wholesaleMode ? 'Giá buôn' : 'Giá lẻ'}</span>
                         </button>
                     </div>
 
                     {/* Search - Fixed width on desktop, full on mobile */}
-                    <div className="relative flex-1 md:flex-none md:w-[640px]">
+                    <div className={cn(
+                        "relative flex-1 md:flex-none",
+                        isTabletLandscape ? "w-96" : "md:w-[640px]" // Wider on Tablet Landscape (approx 50% more than previous w-64)
+                    )}>
                         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">🔍</span>
                         <input
                             ref={searchInputRef}
@@ -931,57 +1007,10 @@ export function POSPage() {
                             </svg>
                         </button>
                         {/* Barcode scan button - MOBILE ONLY */}
+                        {/* Barcode scan button - CAMERA */}
                         <button
                             type="button"
-                            onClick={() => {
-                                // Open camera barcode scanner
-                                const modal = document.createElement('div');
-                                modal.id = 'barcode-scanner-modal';
-                                modal.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.9);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:16px;';
-                                modal.innerHTML = `
-                                <div style="width:100%;max-width:360px;text-align:center;">
-                                    <video id="barcode-video" style="width:100%;border-radius:12px;background:#000;" autoplay playsinline></video>
-                                    <p id="scan-status" style="color:white;margin:12px 0;font-size:14px;">Đang mở camera...</p>
-                                    <button id="close-scanner" style="padding:12px 32px;background:#ef4444;color:white;border:none;border-radius:8px;font-weight:600;cursor:pointer;font-size:16px;">✕ Đóng</button>
-                                </div>
-                            `;
-                                document.body.appendChild(modal);
-                                const video = document.getElementById('barcode-video') as HTMLVideoElement;
-                                const statusEl = document.getElementById('scan-status') as HTMLElement;
-                                const closeBtn = document.getElementById('close-scanner') as HTMLButtonElement;
-                                let stream: MediaStream | null = null;
-                                const cleanup = () => { if (stream) stream.getTracks().forEach(t => t.stop()); modal.remove(); };
-                                closeBtn.onclick = cleanup;
-                                modal.onclick = (e) => { if (e.target === modal) cleanup(); };
-                                navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
-                                    .then(async (s) => {
-                                        stream = s;
-                                        video.srcObject = stream;
-                                        statusEl.textContent = 'Hướng camera vào mã vạch...';
-                                        if ('BarcodeDetector' in window) {
-                                            const detector = new (window as any).BarcodeDetector({ formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'qr_code'] });
-                                            const detect = async () => {
-                                                if (!video.srcObject) return;
-                                                try {
-                                                    const barcodes = await detector.detect(video);
-                                                    if (barcodes.length > 0) {
-                                                        const code = barcodes[0].rawValue;
-                                                        setSearchQuery(code);
-                                                        setShowSearchDropdown(true);
-                                                        statusEl.innerHTML = '<span style="color:#22c55e;">✅ ' + code + '</span>';
-                                                        setTimeout(cleanup, 800);
-                                                        return;
-                                                    }
-                                                } catch (e) { }
-                                                requestAnimationFrame(detect);
-                                            };
-                                            detect();
-                                        } else {
-                                            statusEl.innerHTML = '<span style="color:#fbbf24;">⚠️ Trình duyệt chưa hỗ trợ quét tự động</span>';
-                                        }
-                                    })
-                                    .catch(() => { statusEl.innerHTML = '<span style="color:#ef4444;">❌ Không thể mở camera</span>'; });
-                            }}
+                            onClick={() => setShowScanner(true)}
                             className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-gray-500 hover:text-green-600 hover:bg-green-50 rounded-lg transition-colors md:hidden"
                             title="Quét mã vạch bằng camera"
                         >
@@ -1037,72 +1066,19 @@ export function POSPage() {
                     </div>
 
                     {/* Order Tabs - Scrollable with Navigation */}
-                    <div className="hidden md:flex items-center gap-1 flex-1 min-w-0">
-                        {/* Left Scroll Button */}
-                        {orderTabs.length > 3 && (
-                            <button
-                                onClick={() => {
-                                    const container = document.getElementById('order-tabs-container');
-                                    if (container) container.scrollBy({ left: -80, behavior: 'smooth' });
-                                }}
-                                className="w-6 h-6 bg-white/20 hover:bg-white/30 rounded text-white flex items-center justify-center flex-shrink-0"
-                            >
-                                ‹
-                            </button>
-                        )}
-
-                        {/* Scrollable Tab Container */}
-                        <div
-                            id="order-tabs-container"
-                            className="flex items-center gap-1 overflow-x-auto flex-1"
-                            style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
-                        >
-                            {orderTabs.map((tab, index) => (
-                                <div key={tab.id} className="relative group flex-shrink-0">
-                                    <button
-                                        onClick={() => handleTabSwitch(index)}
-                                        className={cn(
-                                            'px-3 py-1.5 rounded-lg text-sm font-medium transition-all whitespace-nowrap',
-                                            activeTabIndex === index ? 'bg-white text-green-600' : 'bg-white/20 hover:bg-white/30'
-                                        )}
-                                    >
-                                        Đơn {tab.id}
-                                    </button>
-                                    {orderTabs.length > 1 && (
-                                        <button
-                                            onClick={(e) => { e.stopPropagation(); closeOrderTab(index); }}
-                                            className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white rounded-full text-[10px] opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
-                                        >
-                                            ×
-                                        </button>
-                                    )}
-                                </div>
-                            ))}
-                            {/* Add Tab Button - Inside scrollable container */}
-                            <button
-                                onClick={addOrderTab}
-                                className="w-7 h-7 bg-white/20 hover:bg-white/30 rounded-lg text-lg font-bold flex-shrink-0 flex items-center justify-center"
-                            >
-                                +
-                            </button>
-                        </div>
-
-                        {/* Right Scroll Button */}
-                        {orderTabs.length > 3 && (
-                            <button
-                                onClick={() => {
-                                    const container = document.getElementById('order-tabs-container');
-                                    if (container) container.scrollBy({ left: 80, behavior: 'smooth' });
-                                }}
-                                className="w-6 h-6 bg-white/20 hover:bg-white/30 rounded text-white flex items-center justify-center flex-shrink-0"
-                            >
-                                ›
-                            </button>
-                        )}
-                    </div>
+                    <POSTabs
+                        tabs={orderTabs}
+                        activeTabIndex={activeTabIndex}
+                        onSwitchTab={handleTabSwitch}
+                        onCloseTab={closeOrderTab}
+                        onAddTab={addOrderTab}
+                    />
 
                     {/* Right side: Offline indicator, Employee name, Fullscreen, Logout */}
                     <div className="flex items-center gap-2 ml-auto flex-shrink-0 z-[100]">
+
+                        {/* CUSTOMER SEARCH - TABLET LANDSCAPE: REMOVED from Header (Moved back to Right Panel) */}
+
                         {/* Offline Indicator */}
                         {!isOnline && (
                             <div className="bg-red-500 text-white px-2 py-1 rounded-lg text-xs font-bold animate-pulse flex items-center gap-1">
@@ -1110,50 +1086,56 @@ export function POSPage() {
                             </div>
                         )}
 
-                        {/* Employee Name */}
-                        <span className="hidden md:inline text-sm font-medium opacity-90 drop-shadow-md">
-                            👤 {user?.name || user?.email || 'Nhân viên'}
-                        </span>
+                        {/* Employee Name - Hide on Tablet Landscape */}
+                        {!isTabletLandscape && (
+                            <span className="hidden md:inline text-sm font-medium opacity-90 drop-shadow-md">
+                                👤 {user?.name || user?.email || 'Nhân viên'}
+                            </span>
+                        )}
 
-                        {/* Fullscreen Button */}
-                        <button
-                            type="button"
-                            onClick={toggleFullscreen}
-                            onMouseDown={(e) => e.stopPropagation()}
-                            className="bg-white/20 hover:bg-white/30 text-white p-1.5 rounded-lg transition-colors shadow-sm"
-                            title={isFullscreen ? "Thoát toàn màn hình" : "Toàn màn hình"}
-                        >
-                            {isFullscreen ? (
-                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <polyline points="4 14 10 14 10 20" />
-                                    <polyline points="20 10 14 10 14 4" />
-                                    <line x1="14" y1="10" x2="21" y2="3" />
-                                    <line x1="3" y1="21" x2="10" y2="14" />
-                                </svg>
-                            ) : (
-                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <polyline points="15 3 21 3 21 9" />
-                                    <polyline points="9 21 3 21 3 15" />
-                                    <line x1="21" y1="3" x2="14" y2="10" />
-                                    <line x1="3" y1="21" x2="10" y2="14" />
-                                </svg>
-                            )}
-                        </button>
+                        {/* Fullscreen Button - Hide on Tablet Landscape */}
+                        {!isTabletLandscape && (
+                            <button
+                                type="button"
+                                onClick={toggleFullscreen}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                className="bg-white/20 hover:bg-white/30 text-white p-1.5 rounded-lg transition-colors shadow-sm"
+                                title={isFullscreen ? "Thoát toàn màn hình" : "Toàn màn hình"}
+                            >
+                                {isFullscreen ? (
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                        <polyline points="4 14 10 14 10 20" />
+                                        <polyline points="20 10 14 10 14 4" />
+                                        <line x1="14" y1="10" x2="21" y2="3" />
+                                        <line x1="3" y1="21" x2="10" y2="14" />
+                                    </svg>
+                                ) : (
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                        <polyline points="15 3 21 3 21 9" />
+                                        <polyline points="9 21 3 21 3 15" />
+                                        <line x1="21" y1="3" x2="14" y2="10" />
+                                        <line x1="3" y1="21" x2="10" y2="14" />
+                                    </svg>
+                                )}
+                            </button>
+                        )}
 
-                        {/* Logout Button - Icon only */}
-                        <button
-                            type="button"
-                            onClick={() => window.location.href = '/login'}
-                            onMouseDown={(e) => e.stopPropagation()}
-                            className="bg-red-500/80 hover:bg-red-600 text-white p-1.5 rounded-lg transition-colors shadow-sm"
-                            title="Đăng xuất"
-                        >
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-                                <polyline points="16 17 21 12 16 7" />
-                                <line x1="21" y1="12" x2="9" y2="12" />
-                            </svg>
-                        </button>
+                        {/* Logout Button - Icon only - Hide on Tablet Landscape */}
+                        {!isTabletLandscape && (
+                            <button
+                                type="button"
+                                onClick={() => window.location.href = '/dang-nhap'}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                className="bg-red-500/80 hover:bg-red-600 text-white p-1.5 rounded-lg transition-colors shadow-sm"
+                                title="Đăng xuất"
+                            >
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                                    <polyline points="16 17 21 12 16 7" />
+                                    <line x1="21" y1="12" x2="9" y2="12" />
+                                </svg>
+                            </button>
+                        )}
                     </div>
                 </div>
 
@@ -1165,164 +1147,14 @@ export function POSPage() {
                     {/* Left - Cart & Product Area */}
                     <div className="flex-1 flex flex-col bg-slate-50 relative">
                         {/* Cart Section - Flex Grow */}
-                        <div className="flex-1 flex flex-col bg-white m-2 rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-                            {/* Cart Header */}
-                            <div className="h-10 border-b border-gray-100 flex items-center px-2 md:px-4 text-[10px] md:text-xs font-semibold text-gray-400 bg-white">
-                                <span className="w-8 hidden md:block">STT</span>
-                                <span className="flex-1">Sản phẩm ({cartItems.length})</span>
-                                <span className="w-20 text-center hidden md:block">ĐVT</span>
-                                <span className="w-24 text-right">Đơn giá</span>
-                                <span className="w-24 md:w-32 text-center">Số lượng</span>
-                                <span className="w-20 md:w-24 text-right hidden sm:block">Thành tiền</span>
-                                <span className="w-8"></span>
-                            </div>
-
-                            {/* Cart Items */}
-                            <div className="flex-1 overflow-auto">
-                                {cartItems.length === 0 ? (
-                                    <div className="text-center py-16 text-gray-300 select-none">
-                                        <span className="text-6xl block mb-4 opacity-50">🛒</span>
-                                        <p className="font-light">Chưa có sản phẩm</p>
-                                    </div>
-                                ) : (
-                                    cartItems.map((item, index) => (
-                                        <div
-                                            key={item.id}
-                                            className="flex items-center px-4 py-3 border-b border-gray-50 hover:bg-green-50/30 transition-colors group relative"
-                                        >
-                                            <span className="w-8 text-gray-300 text-sm font-light">{index + 1}</span>
-                                            <div className="flex-1 flex items-center gap-3 min-w-0">
-                                                <div className="w-10 h-10 bg-gray-50 rounded-lg flex items-center justify-center text-xl flex-shrink-0 shadow-sm border border-gray-100">
-                                                    {getProductEmoji(item.product?.name)}
-                                                </div>
-                                                <div className="min-w-0">
-                                                    {item.notes && <p className="text-[10px] text-amber-600 mb-0.5 font-medium line-clamp-1 bg-amber-50 inline-block px-1 rounded">📝 {item.notes}</p>}
-                                                    <p className="font-medium text-gray-800 text-sm truncate">{item.product?.name || 'Sản phẩm lỗi'}</p>
-                                                </div>
-                                            </div>
-                                            {/* Unit Selector - Only show dropdown if product has conversion units */}
-                                            <div className="w-20 text-center hidden md:block" onClick={(e) => e.stopPropagation()}>
-                                                {item.product?.units && item.product.units.length > 0 ? (
-                                                    <select
-                                                        value={item.unitName || item.product?.base_unit || 'Cái'}
-                                                        onChange={(e) => {
-                                                            const selectedUnitName = e.target.value;
-                                                            const unit = item.product?.units?.find(u => u.unit_name === selectedUnitName);
-                                                            if (unit) {
-                                                                // Switch to conversion unit
-                                                                addItemWithUnit(item.product!, 1, unit.unit_name, unit.selling_price || item.product!.selling_price * unit.conversion_rate, unit.conversion_rate, unit.id);
-                                                                removeItem(item.id);
-                                                            } else {
-                                                                // Switch back to base unit
-                                                                updateItemUnit(item.id, selectedUnitName);
-                                                            }
-                                                        }}
-                                                        className="w-full bg-transparent text-xs text-center font-medium border-none focus:ring-0 cursor-pointer text-gray-500 hover:text-green-600 py-1"
-                                                    >
-                                                        <option value={item.product?.base_unit || 'Cái'}>{item.product?.base_unit || 'Cái'}</option>
-                                                        {item.product.units.map(unit => (
-                                                            <option key={unit.id} value={unit.unit_name}>{unit.unit_name}</option>
-                                                        ))}
-                                                    </select>
-                                                ) : (
-                                                    <span className="text-xs text-gray-500">{item.unitName || item.product?.base_unit || 'Cái'}</span>
-                                                )}
-                                            </div>
-                                            {/* Unit Price Click -> Price Adjustment */}
-                                            <div
-                                                className="w-24 text-right text-gray-700 font-medium text-sm cursor-pointer hover:bg-gray-100 py-1 rounded transition-colors"
-                                                onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    setPriceAdjustmentItem(item);
-                                                    setPriceAdjust({ mode: 'percent', value: 0, reason: '', note: item.notes || '' });
-                                                }}
-                                            >
-                                                {formatVND(item.unit_price)}
-                                                {item.discount_amount > 0 && <p className="text-[10px] text-red-400 line-through">-{formatVND(item.discount_amount)}</p>}
-                                            </div>
-                                            {/* Quantity Click -> Edit Modal */}
-                                            <div
-                                                className="w-24 md:w-32 flex items-center justify-center gap-1.5 cursor-pointer hover:bg-gray-50 rounded p-1"
-                                                onClick={(e) => {
-                                                    e.stopPropagation(); // Avoid double trigger if any
-                                                    setEditingItem(item);
-                                                }}
-                                            >
-                                                <button
-                                                    onClick={(e) => { e.stopPropagation(); handleQuantityChange(item.id, item.quantity - 1); }}
-                                                    className="w-7 h-7 rounded-lg bg-gray-100 hover:bg-red-100 text-gray-500 hover:text-red-600 font-bold text-sm transition-colors flex items-center justify-center"
-                                                >−</button>
-                                                <input
-                                                    type="number"
-                                                    value={item.quantity}
-                                                    step="any"
-                                                    min="0"
-                                                    onChange={(e) => {
-                                                        const val = parseFloat(e.target.value);
-                                                        if (!isNaN(val) && val > 0) {
-                                                            updateItemQuantity(item.id, val);
-                                                        }
-                                                    }}
-                                                    onBlur={(e) => {
-                                                        const val = parseFloat(e.target.value);
-                                                        if (isNaN(val) || val <= 0) {
-                                                            removeItem(item.id);
-                                                        } else {
-                                                            updateItemQuantity(item.id, val);
-                                                        }
-                                                    }}
-                                                    onClick={(e) => e.stopPropagation()}
-                                                    className="w-14 h-7 text-center font-bold bg-transparent border-b border-gray-200 focus:border-green-500 focus:outline-none text-sm text-gray-800"
-                                                />
-                                                <button
-                                                    onClick={(e) => { e.stopPropagation(); handleQuantityChange(item.id, item.quantity + 1); }}
-                                                    className="w-7 h-7 rounded-lg bg-green-50 hover:bg-green-100 text-green-600 hover:text-green-700 font-bold text-sm transition-colors flex items-center justify-center"
-                                                >+</button>
-                                            </div>
-                                            {/* Total Price Click -> Edit Modal */}
-                                            <span
-                                                className="w-20 md:w-24 text-right font-bold text-sm hidden sm:block cursor-pointer hover:text-green-600 text-gray-800"
-                                                onClick={() => setEditingItem(item)}
-                                            >
-                                                {formatVND(item.total_price)}
-                                            </span>
-                                            {/* Print Barcode Button */}
-                                            <button
-                                                onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    // Open new tab to labels page with product pre-selected
-                                                    const product = item.product;
-                                                    if (product) {
-                                                        const labelData = {
-                                                            id: product.id,
-                                                            name: product.name,
-                                                            barcode: product.barcode || product.sku || '',
-                                                            price: item.unit_price || product.selling_price || 0,
-                                                            quantity: 1 // Default 1 label per click
-                                                        };
-                                                        // Store in sessionStorage and navigate
-                                                        sessionStorage.setItem('quick_print_label', JSON.stringify(labelData));
-                                                        window.open('/barcode-print', '_blank');
-                                                    }
-                                                }}
-                                                className="w-8 flex items-center justify-center text-gray-300 hover:text-orange-500 transition-colors"
-                                                title="In tem mã vạch"
-                                            >
-                                                🏷️
-                                            </button>
-                                            <button
-                                                onClick={(e) => { e.stopPropagation(); removeItem(item.id); }}
-                                                className="w-8 flex items-center justify-center text-gray-300 hover:text-red-500 transition-colors"
-                                            >
-                                                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                                                </svg>
-                                            </button>
-                                        </div>
-                                    ))
-                                )}
-                            </div>
-                        </div>
+                        <POSCartList
+                            items={cartItems}
+                            onUpdateQuantity={handleQuantityChange}
+                            onRemoveItem={removeItem}
+                            onUnitChange={handleUnitChange}
+                            onRequestPriceAdjustment={handlePriceAdjustmentRequest}
+                            onRequestEdit={handleEditRequest}
+                        />
 
                         {/* Resizable Divider */}
                         <div
@@ -1347,1266 +1179,86 @@ export function POSPage() {
                         </div>
 
                         {/* Products Bottom Section - Resizable */}
-                        <div
-                            style={{ height: productPanelHeight }}
-                            className="bg-white border-t border-gray-100 flex flex-col shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] z-20 transition-[height] duration-75 relative"
-                        >
-                            {/* Header & Categories */}
-                            <div className="flex items-center gap-2 px-3 py-2 border-b border-gray-100 bg-white/95 backdrop-blur-sm sticky top-0 z-50">
-                                {/* Quick Actions Dropdown */}
-                                <div className="relative group">
-                                    <button className="w-9 h-9 rounded-lg bg-green-50 text-green-600 hover:bg-green-100 flex items-center justify-center transition-colors">
-                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                                            <path d="M5 3a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2V5a2 2 0 00-2-2H5zM5 11a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2v-2a2 2 0 00-2-2H5zM11 5a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V5zM11 13a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
-                                        </svg>
-                                    </button>
-                                    {/* Quick Menu Popup */}
-                                    <div className="absolute bottom-full left-0 mb-2 w-56 bg-white rounded-xl shadow-xl border border-gray-100 p-1 invisible group-hover:visible opacity-0 group-hover:opacity-100 transition-all duration-200 origin-bottom-left z-[100]">
-                                        <button onClick={() => setShowOrderLookup(true)} className="w-full text-left px-3 py-2 rounded-lg hover:bg-gray-50 text-sm font-medium text-gray-700 flex items-center gap-2">
-                                            📄 Tra đơn hàng
-                                        </button>
-                                        <button onClick={() => setShowCustomerLookup(true)} className="w-full text-left px-3 py-2 rounded-lg hover:bg-gray-50 text-sm font-medium text-gray-700 flex items-center gap-2">
-                                            👥 Tra khách hàng
-                                        </button>
-                                        <div className="h-px bg-gray-100 my-1"></div>
-                                        <button onClick={() => setShowShiftModal(true)} className="w-full text-left px-3 py-2 rounded-lg hover:bg-gray-50 text-sm font-medium text-gray-700 flex items-center gap-2">
-                                            ⏱️ Quản lý ca
-                                        </button>
-                                        <button onClick={() => setShowReminderManager(true)} className="w-full text-left px-3 py-2 rounded-lg hover:bg-gray-50 text-sm font-medium text-gray-700 flex items-center gap-2">
-                                            ⏰ Lời nhắc
-                                        </button>
-                                    </div>
-                                </div>
-
-                                {/* Ca làm việc Button - Visible */}
-                                <button
-                                    onClick={() => setShowShiftModal(true)}
-                                    className="px-3 py-1.5 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 text-xs font-medium flex items-center gap-1 transition-colors flex-shrink-0"
-                                    title="Quản lý ca làm việc"
-                                >
-                                    <span>⏱️</span> <span className="hidden sm:inline">Ca làm việc</span>
-                                </button>
-
-                                {/* Tra đơn Button - Visible */}
-                                <button
-                                    onClick={() => setShowOrderLookup(true)}
-                                    className="px-3 py-1.5 rounded-lg bg-amber-50 text-amber-600 hover:bg-amber-100 text-xs font-medium flex items-center gap-1 transition-colors flex-shrink-0"
-                                    title="Tra cứu đơn hàng"
-                                >
-                                    <span>📄</span> <span className="hidden sm:inline">Tra đơn</span>
-                                </button>
-
-
-
-                                <div className="h-6 w-px bg-gray-200 mx-1"></div>
-
-                                {/* All Tab */}
-                                {posCategories.showAllTab && (
-                                    <button
-                                        onClick={() => setSelectedCategory('all')}
-                                        className={cn("px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm flex-shrink-0",
-                                            selectedCategory === 'all' ? "bg-green-600 text-white" : "bg-gray-100 hover:bg-gray-200 text-gray-600"
-                                        )}
-                                    >
-                                        Tất cả
-                                    </button>
-                                )}
-
-                                {/* Dynamic Categories from Store - ORDERED */}
-                                <div className="flex-1 overflow-x-auto flex gap-2 no-scrollbar">
-                                    {orderedCategories
-                                        .filter(cat =>
-                                            posCategories.visibleCategoryIds.length === 0 ||
-                                            posCategories.visibleCategoryIds.includes(cat.id)
-                                        )
-                                        .map((cat) => (
-                                            <button
-                                                key={cat.id}
-                                                onClick={() => setSelectedCategory(cat.id)}
-                                                className={cn("px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors",
-                                                    selectedCategory === cat.id ? "bg-green-600 text-white" : "bg-gray-100 hover:bg-gray-200 text-gray-600 hover:text-gray-900"
-                                                )}
-                                            >
-                                                {cat.name}
-                                            </button>
-                                        ))
-                                    }
-                                    {/* Custom Lists */}
-                                    {posCategories.customLists.map((list) => (
-                                        <button
-                                            key={list.id}
-                                            onClick={() => setSelectedCategory(list.id)}
-                                            className={cn("px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors",
-                                                selectedCategory === list.id ? "bg-green-600 text-white" : "bg-purple-100 hover:bg-purple-200 text-purple-700"
-                                            )}
-                                        >
-                                            📋 {list.name}
-                                        </button>
-                                    ))}
-                                </div>
-
-                                {/* Settings Gear Icon - RIGHT SIDE */}
-                                <button
-                                    onClick={() => setShowCategorySettings(true)}
-                                    className="p-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-600 hover:text-gray-900 transition-colors flex-shrink-0 ml-2"
-                                    title="Cài đặt danh mục"
-                                >
-                                    ⚙️
-                                </button>
-                            </div>
-
-                            {/* Product Grid - By Category */}
-                            <div className="flex-1 p-2 overflow-y-auto bg-slate-50">
-                                <div
-                                    className="grid gap-2"
-                                    style={{
-                                        gridTemplateColumns: `repeat(${rawPosCategories.productGridColumns || 6}, minmax(0, 1fr))`
-                                    }}
-                                >
-                                    {gridProducts.slice(0, 50).map((item) => (
-                                        <button
-                                            key={item.id}
-                                            onClick={() => handleProductClick(item)}
-                                            className="bg-white rounded-xl border border-gray-200 hover:border-green-400 hover:shadow-lg transition-all duration-200 text-left group flex h-16 overflow-hidden shadow-sm"
-                                        >
-                                            {/* Left: Square Image Block */}
-                                            <div className="w-16 h-16 flex-shrink-0 flex items-center justify-center bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 border-r border-gray-100 rounded-l-xl relative overflow-hidden">
-                                                <div className="absolute inset-0 bg-gradient-to-br from-white/50 to-transparent" />
-                                                <span className="text-3xl relative z-10 drop-shadow-sm group-hover:scale-110 transition-transform duration-200">
-                                                    {getProductEmoji(item.name)}
-                                                </span>
-                                            </div>
-                                            {/* Right: Name, Price, Stock */}
-                                            <div className="flex-1 min-w-0 p-2 flex flex-col justify-between">
-                                                <p className="text-[11px] font-semibold text-gray-800 line-clamp-2 leading-tight">{item.name}</p>
-                                                <div className="flex items-center justify-between gap-1">
-                                                    <span className="text-[10px] font-bold bg-gradient-to-r from-green-50 to-emerald-50 text-green-700 px-1.5 py-0.5 rounded-md border border-green-100">
-                                                        {formatVND(item.price)}
-                                                    </span>
-                                                    <span className={cn(
-                                                        "text-[9px] font-medium px-1 py-0.5 rounded",
-                                                        item.stock > 10 ? "bg-blue-50 text-blue-600" :
-                                                            item.stock > 0 ? "bg-amber-50 text-amber-600" :
-                                                                "bg-red-50 text-red-600"
-                                                    )}>
-                                                        SL: {item.stock}
-                                                    </span>
-                                                </div>
-                                            </div>
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
-                        </div>
+                        <POSProductList
+                            products={gridProducts}
+                            orderedCategories={orderedCategories}
+                            selectedCategory={selectedCategory}
+                            onSelectCategory={setSelectedCategory}
+                            visibleCategoryIds={posCategories.visibleCategoryIds}
+                            showAllTab={posCategories.showAllTab}
+                            customLists={posCategories.customLists}
+                            onShowOrderLookup={() => setShowOrderLookup(true)}
+                            onShowCustomerLookup={() => setShowCustomerLookup(true)}
+                            onShowShiftModal={() => setShowShiftModal(true)}
+                            onShowReminderManager={() => setShowReminderManager(true)}
+                            onShowCategorySettings={() => setShowCategorySettings(true)}
+                            gridColumns={rawPosCategories.productGridColumns || 6}
+                            panelHeight={productPanelHeight}
+                            onProductClick={handleProductClick}
+                        />
                     </div>
 
                     {/* Right - Payment Panel - Green Theme */}
-                    <div className={cn(
-                        "bg-white flex flex-col shadow-[0_0_40px_-10px_rgba(0,0,0,0.1)] z-30 transition-all duration-300 md:rounded-l-3xl border-l border-gray-100",
-                        isMobile || isTablet
-                            ? `fixed inset-x-0 bottom-0 border-t rounded-t-3xl ${showMobilePayment ? 'translate-y-0 h-[85vh]' : 'translate-y-[calc(100%-80px)] h-[85vh]'}`
-                            : "w-[660px] h-full"
-                    )}>
-                        {/* Customer Header */}
-                        <div className="p-3 relative bg-white z-20 shrink-0" data-customer-search>
-                            {customer ? (
-                                <div className="relative">
-                                    <div className="flex items-center gap-3">
-                                        <div className="text-gray-400">
-                                            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                                            </svg>
-                                        </div>
-                                        <div className="flex-1 flex items-center justify-between">
-                                            <div className="flex items-center gap-2">
-                                                <button
-                                                    onClick={() => setShowEditCustomerModal(true)}
-                                                    className="font-bold text-green-600 text-base hover:underline hover:text-green-700 cursor-pointer"
-                                                    title="Click để chỉnh sửa thông tin khách hàng"
-                                                >
-                                                    {customer.name}
-                                                </button>
-                                                <span className="text-gray-500 font-medium text-sm">- {customer.phone}</span>
-                                            </div>
-                                            <div className="flex gap-3 text-sm text-gray-600">
-                                                <span>Nợ: <span className="font-bold text-red-500">{formatVND(customer.debt_balance)}</span></span>
-                                                <span className="text-gray-300">|</span>
-                                                <span>Điểm: <span className="font-bold text-amber-500">{customer.points_balance}</span></span>
-                                            </div>
-                                        </div>
-                                        <button
-                                            onClick={() => setCustomer(null)}
-                                            className="text-gray-400 hover:text-red-500 p-1"
-                                        >
-                                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                                                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-                                            </svg>
-                                        </button>
-                                    </div>
-                                </div>
-                            ) : (
-                                <div className="relative">
-                                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
-                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                                        </svg>
-                                    </div>
-                                    <input
-                                        ref={inputRef}
-                                        type="text"
-                                        value={customerSearch}
-                                        onChange={(e) => {
-                                            setCustomerSearch(e.target.value);
-                                            setShowCustomerDropdown(true);
-                                        }}
-                                        onFocus={() => setShowCustomerDropdown(true)}
-                                        onKeyDown={(e) => {
-                                            if (e.key === 'Enter' && filteredCustomers.length > 0) {
-                                                setCustomer(filteredCustomers[0]);
-                                                setCustomerSearch('');
-                                                setShowCustomerDropdown(false);
-                                            }
-                                        }}
-                                        placeholder="Thêm khách hàng vào đơn (F4)"
-                                        className="w-full pl-10 pr-10 py-2 border-b border-gray-300 focus:border-green-500 focus:outline-none text-sm bg-transparent relative z-[200]"
-                                    />
-                                    <button
-                                        onClick={() => {
-                                            setInitialPhone(customerSearch);
-                                            setShowAddCustomerModal(true);
-                                        }}
-                                        className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-green-600 z-[200]"
-                                        title="Thêm khách hàng mới"
-                                    >
-                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                                        </svg>
-                                    </button>
-                                </div>
-                            )}
-
-                            {/* Dropdown Menu */}
-                            {showCustomerDropdown && (
-                                <div
-                                    ref={dropdownRef}
-                                    className="absolute top-full left-0 right-0 bg-white rounded-xl shadow-2xl border border-gray-100 z-[201] mt-2 max-h-[60vh] overflow-hidden ring-1 ring-black/5"
-                                >
-                                    <div className="max-h-80 overflow-y-auto">
-                                        {filteredCustomers.length === 0 ? (
-                                            <div className="text-center py-8 text-gray-400 text-sm">
-                                                <p>Chưa có khách hàng</p>
-                                                <button
-                                                    onMouseDown={(e) => e.preventDefault()}
-                                                    onClick={() => {
-                                                        setInitialPhone(customerSearch);
-                                                        setShowAddCustomerModal(true);
-                                                        setShowCustomerDropdown(false);
-                                                    }}
-                                                    className="mt-2 text-green-600 hover:underline font-medium"
-                                                >
-                                                    + Thêm khách hàng mới
-                                                </button>
-                                            </div>
-                                        ) : (
-                                            filteredCustomers.map((c) => (
-                                                <button
-                                                    key={c.id}
-                                                    type="button"
-                                                    onMouseDown={(e) => e.preventDefault()}
-                                                    onClick={() => {
-                                                        setCustomer(c);
-                                                        setCustomerSearch('');
-                                                        setShowCustomerDropdown(false);
-                                                    }}
-                                                    className="w-full flex items-center gap-3 px-4 py-3 hover:bg-green-50 text-left border-b border-gray-50 last:border-0 transition-colors group"
-                                                >
-                                                    <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center text-green-700 font-bold text-sm shrink-0 group-hover:bg-green-200 transition-colors">
-                                                        {c.name.charAt(0).toUpperCase()}
-                                                    </div>
-                                                    <div className="flex-1 min-w-0">
-                                                        <p className="font-bold text-gray-800 text-sm truncate group-hover:text-green-700 transition-colors">{c.name}</p>
-                                                        <p className="text-xs text-gray-500 font-medium">{c.phone}</p>
-                                                    </div>
-                                                    <div className="text-right shrink-0 flex flex-col items-end gap-1">
-                                                        {/* Only show debt in dropdown - points shown after selection */}
-                                                        {c.debt_balance > 0 && (
-                                                            <span className="text-red-600 text-[10px] font-bold bg-red-50 px-2 py-0.5 rounded-full border border-red-100">
-                                                                Nợ: {formatVND(c.debt_balance)}
-                                                            </span>
-                                                        )}
-                                                    </div>
-                                                </button>
-                                            ))
-                                        )}
-                                    </div>
-                                </div>
-
-                            )}
-                        </div>
-
-                        {/* Delivery Form - Only show when mode is active */}
-                        {isDeliveryMode && (
-                            <div className="bg-white px-3 pb-3">
-                                <div className="space-y-2 bg-amber-50 p-3 rounded-xl border border-amber-100 animation-fade-in">
-                                    <div className="grid grid-cols-2 gap-2">
-                                        <div>
-                                            <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Người nhận</label>
-                                            <input
-                                                type="text"
-                                                value={deliveryInfo.recipient_name}
-                                                onChange={(e) => setDeliveryInfo({ ...deliveryInfo, recipient_name: e.target.value })}
-                                                className="w-full text-sm px-2 py-1.5 border border-gray-200 rounded focus:border-amber-500 focus:outline-none"
-                                                placeholder="Tên người nhận"
-                                            />
-                                        </div>
-                                        <div>
-                                            <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Điện thoại</label>
-                                            <input
-                                                type="text"
-                                                value={deliveryInfo.recipient_phone}
-                                                onChange={(e) => setDeliveryInfo({ ...deliveryInfo, recipient_phone: e.target.value })}
-                                                className="w-full text-sm px-2 py-1.5 border border-gray-200 rounded focus:border-amber-500 focus:outline-none"
-                                                placeholder="SĐT liên hệ"
-                                            />
-                                        </div>
-                                    </div>
-                                    <div>
-                                        <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Địa chỉ giao</label>
-                                        <input
-                                            type="text"
-                                            value={deliveryInfo.shipping_address}
-                                            onChange={(e) => setDeliveryInfo({ ...deliveryInfo, shipping_address: e.target.value })}
-                                            className="w-full text-sm px-2 py-1.5 border border-gray-200 rounded focus:border-amber-500 focus:outline-none"
-                                            placeholder="Số nhà, đường, phường/xã..."
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">Ghi chú giao hàng</label>
-                                        <input
-                                            type="text"
-                                            value={deliveryInfo.delivery_notes}
-                                            onChange={(e) => setDeliveryInfo({ ...deliveryInfo, delivery_notes: e.target.value })}
-                                            className="w-full text-sm px-2 py-1.5 border border-gray-200 rounded focus:border-amber-500 focus:outline-none"
-                                            placeholder="VD: Giao giờ hành chính..."
-                                        />
-                                    </div>
-                                </div>
-                            </div>
+                    {/* Right - Payment Panel - Green Theme */}
+                    <POSPaymentPanel
+                        total={total}
+                        subtotal={subtotal}
+                        discountAmount={discountAmount}
+                        taxAmount={taxAmount}
+                        taxRate={taxRate}
+                        setTaxRate={setTaxRate}
+                        customer={customer}
+                        onSelectCustomer={setCustomer}
+                        onShowCustomerModal={(type, phone) => {
+                            if (type === 'add') {
+                                setInitialPhone(phone || '');
+                                setShowAddCustomerModal(true);
+                            } else {
+                                setShowEditCustomerModal(true);
+                            }
+                        }}
+                        onShowCustomerLookup={() => setShowCustomerLookup(true)}
+                        inputRef={inputRef as React.RefObject<HTMLInputElement>}
+                        loyalty={loyalty}
+                        pointsToUse={pointsToUse}
+                        setPointsToUse={setPointsToUse}
+                        paymentMethod={paymentMethod || 'cash'}
+                        setPaymentMethod={setPaymentMethod}
+                        paymentMethodsConfig={paymentMethodsConfig}
+                        paymentSplit={paymentSplit}
+                        setPaymentSplit={setPaymentSplit}
+                        cashReceived={cashReceived}
+                        setCashReceived={setCashReceived}
+                        manualCash={manualCash}
+                        setManualCash={setManualCash}
+                        orderNote={orderNote}
+                        setOrderNote={setOrderNote}
+                        cartItemCount={cartItems.length}
+                        tempDiscount={tempDiscount}
+                        setTempDiscount={setTempDiscount}
+                        setDiscount={setDiscount}
+                        isDeliveryMode={isDeliveryMode}
+                        setIsDeliveryMode={setIsDeliveryMode}
+                        deliveryInfo={deliveryInfo}
+                        setDeliveryInfo={setDeliveryInfo}
+                        isSubmitting={isSubmitting}
+                        onSubmit={handlePaymentSubmit}
+                        onSaveDraft={handleSaveDraft}
+                        onPrintProvisional={handlePrintProvisional}
+                        shouldPrintReceipt={shouldPrintReceipt}
+                        setShouldPrintReceipt={setShouldPrintReceipt}
+                        isMobile={isMobile}
+                        isTablet={isTablet}
+                        isTabletLandscape={isTabletLandscape}
+                        className={cn(
+                            (isMobile || isTablet) && !isTabletLandscape
+                                ? `fixed inset-x-0 bottom-0 border-t rounded-t-3xl ${showMobilePayment ? 'translate-y-0 h-[85vh]' : 'translate-y-[calc(100%-80px)] h-[85vh]'}`
+                                : isTabletLandscape
+                                    ? "w-[70%] h-full"
+                                    : "w-[660px] h-full"
                         )}
-
-                        {/* Divider Block - Under Customer Section */}
-                        <div className="h-2 bg-gradient-to-b from-gray-100 to-gray-50 shrink-0"></div>
-
-                        {/* SCROLLABLE MIDDLE CONTENT - One single container for totals and payment */}
-                        <div className="flex-1 overflow-y-auto no-scrollbar pb-4">
-
-                            {/* Totals Section */}
-                            <div className="px-4 py-2 space-y-1.5 bg-white">
-                                {/* Removed Online Indicator and Separator */}
-
-                                <div className="flex justify-between items-center text-sm">
-                                    <span className="text-gray-600">Tổng tiền hàng</span>
-                                    <span className="font-medium text-gray-900">{formatVND(subtotal)}</span>
-                                </div>
-
-                                {/* Discount Row */}
-                                <div className="flex justify-between items-center text-sm">
-                                    <span className="text-gray-600">Chiết khấu</span>
-                                    <div className="flex items-center gap-2">
-                                        <div className="flex bg-gray-100 rounded-lg p-0.5 border border-gray-200">
-                                            <button
-                                                onClick={() => {
-                                                    const newType = 'percent';
-                                                    setTempDiscount({ ...tempDiscount, type: newType });
-                                                    setDiscount((subtotal * tempDiscount.value) / 100);
-                                                }}
-                                                className={cn("px-4 py-1 text-xs rounded-md font-medium transition-all w-12 flex justify-center", tempDiscount.type === 'percent' ? "bg-green-500 text-white shadow-md" : "bg-gray-100 text-gray-500 hover:bg-gray-200")}
-                                            >%</button>
-                                            <button
-                                                onClick={() => {
-                                                    const newType = 'amount';
-                                                    setTempDiscount({ ...tempDiscount, type: newType });
-                                                    setDiscount(tempDiscount.value);
-                                                }}
-                                                className={cn("px-3 py-1 text-xs rounded-md font-medium transition-all flex justify-center", tempDiscount.type === 'amount' ? "bg-green-500 text-white shadow-md" : "bg-gray-100 text-gray-500 hover:bg-gray-200")}
-                                            >VNĐ</button>
-                                        </div>
-                                        <input
-                                            type="number"
-                                            value={tempDiscount.value}
-                                            min="0"
-                                            max={tempDiscount.type === 'percent' ? 100 : undefined}
-                                            onChange={(e) => {
-                                                let val = parseFloat(e.target.value) || 0;
-                                                // Limit percent to 100%
-                                                if (tempDiscount.type === 'percent' && val > 100) {
-                                                    val = 100;
-                                                }
-                                                setTempDiscount({ ...tempDiscount, value: val });
-                                                if (tempDiscount.type === 'percent') {
-                                                    setDiscount((subtotal * val) / 100);
-                                                } else {
-                                                    setDiscount(val);
-                                                }
-                                            }}
-                                            className="w-24 text-right border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:border-green-500 font-medium"
-                                            onClick={(e) => e.stopPropagation()}
-                                        />
-                                    </div>
-                                </div>
-
-                                {/* Tax Row */}
-                                <div className="flex justify-between items-center text-sm">
-                                    <span className="text-gray-600">Thuế (VAT)</span>
-                                    <div className="flex items-center gap-2">
-                                        <input
-                                            type="number"
-                                            min="0"
-                                            max="100"
-                                            value={taxRate}
-                                            onChange={(e) => {
-                                                const val = parseFloat(e.target.value);
-                                                setTaxRate(isNaN(val) ? 0 : val);
-                                            }}
-                                            className="w-24 text-right border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:border-green-500 font-medium"
-                                        />
-                                        <span className="text-gray-400 text-xs w-10 text-right">%</span>
-                                    </div>
-                                </div>
-
-                                {/* Points Payment Row - Only show when customer has points */}
-                                {customer && customer.points_balance > 0 && loyalty?.enabled && (
-                                    <div className="flex justify-between items-center text-sm bg-orange-50 p-2 rounded-lg border border-orange-200">
-                                        <div>
-                                            <span className="text-orange-700 font-medium">⭐ Thanh toán bằng điểm</span>
-                                            <span className="text-xs text-orange-500 ml-2">({customer.points_balance} điểm = {formatVND(customer.points_balance * (loyalty?.redemptionRate || 1000))})</span>
-                                        </div>
-                                        <div className="flex items-center gap-2">
-                                            <input
-                                                type="number"
-                                                min="0"
-                                                max={Math.min(customer.points_balance, Math.ceil(total / (loyalty?.redemptionRate || 1000)))}
-                                                value={pointsToUse || ''}
-                                                onChange={(e) => {
-                                                    const val = parseInt(e.target.value) || 0;
-                                                    const maxPoints = Math.min(customer.points_balance, Math.ceil(total / (loyalty?.redemptionRate || 1000)));
-                                                    const newPoints = Math.min(val, maxPoints);
-                                                    const pointsDiff = newPoints - pointsToUse;
-                                                    const pointsValueDiff = pointsDiff * (loyalty?.redemptionRate || 1000);
-
-                                                    // Auto-deduct from current payment method
-                                                    if (paymentMethod && paymentMethod !== 'debt') {
-                                                        setPaymentSplit(prev => {
-                                                            const currentValue = prev[paymentMethod] || 0;
-                                                            const newValue = Math.max(0, currentValue - pointsValueDiff);
-                                                            return { ...prev, [paymentMethod]: newValue };
-                                                        });
-                                                    }
-                                                    setPointsToUse(newPoints);
-                                                }}
-                                                placeholder="0"
-                                                className="w-20 text-right border border-orange-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:border-orange-500 font-medium bg-white"
-                                            />
-                                            <span className="text-orange-600 text-xs font-medium">= {formatVND(pointsToUse * (loyalty?.redemptionRate || 1000))}</span>
-                                        </div>
-                                    </div>
-                                )}
-
-                                <div className="flex justify-between items-center pt-2 border-t border-gray-100">
-                                    <span className="font-bold text-gray-800 text-lg">KHÁCH CẦN TRẢ</span>
-                                    <div className="text-right">
-                                        <span className="font-bold text-3xl text-green-600">{formatVND(Math.max(0, total - pointsToUse * (loyalty?.redemptionRate || 1000)))}</span>
-                                        {pointsToUse > 0 && (
-                                            <span className="block text-xs text-orange-500">Đã trừ {formatVND(pointsToUse * (loyalty?.redemptionRate || 1000))} ({pointsToUse} điểm)</span>
-                                        )}
-                                    </div>
-                                </div>
-                            </div>
-
-                            {/* Payment Inputs - HIDDEN IN DELIVERY MODE */}
-                            {!isDeliveryMode && (
-                                <div className="px-4">
-                                    {/* Methods - Dynamic from Settings */}
-                                    <div className={cn(
-                                        "grid gap-1 mb-2",
-                                        paymentMethodsConfig.filter(m => m.enabled).length <= 4 ? "grid-cols-4" : "grid-cols-5"
-                                    )}>
-                                        {paymentMethodsConfig
-                                            .filter(m => m.enabled)
-                                            .sort((a, b) => a.sortOrder - b.sortOrder)
-                                            .map((m) => (
-                                                <button
-                                                    key={m.id}
-                                                    onClick={() => {
-                                                        // Auto-fill remaining amount to new method
-                                                        const pointsValue = pointsToUse * (loyalty?.redemptionRate || 1000);
-                                                        const currentPaid = Object.values(paymentSplit).reduce((a, b) => a + b, 0) + pointsValue;
-                                                        const remaining = Math.max(0, total - currentPaid);
-                                                        if (remaining > 0 && m.id !== 'debt') {
-                                                            setPaymentSplit(prev => ({ ...prev, [m.id]: (prev[m.id as keyof typeof prev] || 0) + remaining }));
-                                                        }
-                                                        setPaymentMethod(m.id as any);
-                                                    }}
-                                                    className={cn(
-                                                        "flex flex-col items-center justify-center py-1.5 rounded-lg border transition-all duration-200",
-                                                        paymentMethod === m.id
-                                                            ? "bg-green-50 border-green-500 text-green-700 ring-1 ring-green-500"
-                                                            : "bg-white border-gray-200 text-gray-600 hover:bg-gray-50 hover:border-gray-300"
-                                                    )}
-                                                >
-                                                    <span className="text-sm">
-                                                        {m.iconType === 'url' ? (
-                                                            <img src={m.icon} alt={m.name} className="w-4 h-4" />
-                                                        ) : m.icon}
-                                                    </span>
-                                                    <span className="text-[10px] font-bold truncate max-w-full px-1">{m.name}</span>
-                                                </button>
-                                            ))}
-                                    </div>
-
-                                    {/* Cash Area */}
-                                    {paymentMethod === 'cash' && (
-                                        <div className="space-y-2 animation-fade-in bg-white border border-gray-100 rounded-xl p-2">
-                                            <div className="flex justify-between items-center text-sm gap-4">
-                                                <span className="text-gray-700 whitespace-nowrap font-bold">Tiền khách đưa</span>
-                                                <CurrencyInput
-                                                    className="w-28 text-right border border-gray-200 rounded-lg px-2 py-1 text-base focus:outline-none focus:border-green-500 font-bold"
-                                                    value={cashReceived || ''}
-                                                    onValueChange={(val) => {
-                                                        setCashReceived(val);
-                                                        setManualCash(val.toLocaleString('vi-VN'));
-                                                        setPaymentSplit(prev => ({ ...prev, cash: val }));
-                                                    }}
-                                                    placeholder="0"
-                                                    autoFocus
-                                                />
-                                            </div>
-
-                                            {/* Numpad + Payment Summary Layout - NEW: 50/50 split */}
-                                            <div className="flex gap-2">
-                                                {/* Numpad - 50% width, 15% smaller */}
-                                                <div className="w-1/2">
-                                                    <div className="grid grid-cols-3 gap-0.5">
-                                                        {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => (
-                                                            <button key={n} onClick={() => {
-                                                                const newVal = (cashReceived || 0) * 10 + n;
-                                                                setCashReceived(newVal);
-                                                                setManualCash(newVal.toLocaleString('vi-VN'));
-                                                                setPaymentSplit(prev => ({ ...prev, cash: newVal }));
-                                                            }} className="h-10 bg-white rounded text-sm font-bold hover:bg-green-50 text-gray-700 transition-colors border border-gray-200 active:scale-95">{n}</button>
-                                                        ))}
-                                                        <button onClick={() => { setManualCash('0'); setCashReceived(0); setPaymentSplit(prev => ({ ...prev, cash: 0 })); }} className="h-10 bg-red-50 text-red-500 rounded text-sm font-bold hover:bg-red-100 transition-colors border border-red-100 active:scale-95">C</button>
-                                                        <button onClick={() => {
-                                                            const newVal = (cashReceived || 0) * 10;
-                                                            setCashReceived(newVal);
-                                                            setManualCash(newVal.toLocaleString('vi-VN'));
-                                                            setPaymentSplit(prev => ({ ...prev, cash: newVal }));
-                                                        }} className="h-10 bg-white rounded text-sm font-bold hover:bg-green-50 text-gray-700 transition-colors border border-gray-200 active:scale-95">0</button>
-                                                        <button onClick={() => {
-                                                            const newVal = (cashReceived || 0) * 1000;
-                                                            setCashReceived(newVal);
-                                                            setManualCash(newVal.toLocaleString('vi-VN'));
-                                                            setPaymentSplit(prev => ({ ...prev, cash: newVal }));
-                                                        }} className="h-10 bg-white rounded text-sm font-bold hover:bg-green-50 text-gray-700 transition-colors border border-gray-200 active:scale-95">000</button>
-                                                    </div>
-                                                </div>
-
-                                                {/* Payment Summary - 50% width with X buttons */}
-                                                <div className="w-1/2 bg-gray-50 rounded-lg p-2 border border-gray-100">
-                                                    <div className="text-[10px] font-bold text-gray-500 mb-1 uppercase">Chi tiết thanh toán</div>
-                                                    <div className="space-y-1 text-xs max-h-24 overflow-y-auto">
-                                                        {paymentSplit.cash > 0 && (
-                                                            <div className="flex justify-between items-center text-green-700 group">
-                                                                <span>💵 Mặt</span>
-                                                                <div className="flex items-center gap-1">
-                                                                    <span className="font-bold min-w-[80px] text-right">{formatVND(paymentSplit.cash)}</span>
-                                                                    <button onClick={() => setPaymentSplit(prev => ({ ...prev, cash: 0 }))} className="text-red-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity text-xs">✕</button>
-                                                                </div>
-                                                            </div>
-                                                        )}
-                                                        {paymentSplit.transfer > 0 && (
-                                                            <div className="flex justify-between items-center text-blue-700 group">
-                                                                <span>🏦 CK</span>
-                                                                <div className="flex items-center gap-1">
-                                                                    <span className="font-bold min-w-[80px] text-right">{formatVND(paymentSplit.transfer)}</span>
-                                                                    <button onClick={() => {
-                                                                        const amt = paymentSplit.transfer;
-                                                                        setPaymentSplit(prev => ({ ...prev, transfer: 0, [paymentMethod]: (prev[paymentMethod] || 0) + amt }));
-                                                                    }} className="text-red-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity text-xs">✕</button>
-                                                                </div>
-                                                            </div>
-                                                        )}
-                                                        {paymentSplit.card > 0 && (
-                                                            <div className="flex justify-between items-center text-purple-700 group">
-                                                                <span>💳 Thẻ</span>
-                                                                <div className="flex items-center gap-1">
-                                                                    <span className="font-bold min-w-[80px] text-right">{formatVND(paymentSplit.card)}</span>
-                                                                    <button onClick={() => {
-                                                                        const amt = paymentSplit.card;
-                                                                        setPaymentSplit(prev => ({ ...prev, card: 0, [paymentMethod]: (prev[paymentMethod] || 0) + amt }));
-                                                                    }} className="text-red-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity text-xs">✕</button>
-                                                                </div>
-                                                            </div>
-                                                        )}
-                                                        {pointsToUse > 0 && loyalty && (
-                                                            <div className="flex justify-between items-center text-orange-700 group">
-                                                                <span>⭐ {pointsToUse} điểm</span>
-                                                                <div className="flex items-center gap-1">
-                                                                    <span className="font-bold min-w-[80px] text-right">{formatVND(pointsToUse * (loyalty.redemptionRate || 1000))}</span>
-                                                                    <button onClick={() => setPointsToUse(0)} className="text-red-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity text-xs">✕</button>
-                                                                </div>
-                                                            </div>
-                                                        )}
-                                                        {paymentSplit.debt > 0 && (
-                                                            <div className="flex justify-between items-center text-red-700 group">
-                                                                <span>📝 Nợ</span>
-                                                                <div className="flex items-center gap-1">
-                                                                    <span className="font-bold min-w-[80px] text-right">{formatVND(paymentSplit.debt)}</span>
-                                                                    <button onClick={() => {
-                                                                        const amt = paymentSplit.debt;
-                                                                        setPaymentSplit(prev => ({ ...prev, debt: 0, [paymentMethod]: (prev[paymentMethod] || 0) + amt }));
-                                                                    }} className="text-red-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity text-xs">✕</button>
-                                                                </div>
-                                                            </div>
-                                                        )}
-                                                        {/* Show remaining */}
-                                                        {(() => {
-                                                            const pointsValue = pointsToUse * (loyalty?.redemptionRate || 1000);
-                                                            const paid = Object.values(paymentSplit).reduce((a, b) => a + b, 0) + pointsValue;
-                                                            const remaining = Math.max(0, total - paid);
-                                                            if (remaining > 0) {
-                                                                return (
-                                                                    <div className="flex justify-between items-center text-gray-500 pt-1 border-t border-gray-200">
-                                                                        <span>Còn thiếu</span>
-                                                                        <span className="font-bold text-red-500 min-w-[80px] text-right">{formatVND(remaining)}</span>
-                                                                    </div>
-                                                                );
-                                                            }
-                                                            return null;
-                                                        })()}
-                                                    </div>
-                                                    <div className="mt-1 pt-1 border-t border-gray-200">
-                                                        <div className="flex justify-between items-center text-xs">
-                                                            <span className="font-bold text-gray-700">Tổng</span>
-                                                            <span className="font-black text-green-600 min-w-[80px] text-right">{formatVND(Object.values(paymentSplit).reduce((a, b) => a + b, 0) + pointsToUse * (loyalty?.redemptionRate || 1000))}</span>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            </div>
-
-                                            {/* Suggestions - Smart amounts based on order total */}
-                                            {(() => {
-                                                const pointsValue = pointsToUse * (loyalty?.redemptionRate || 1000);
-                                                const paid = Object.values(paymentSplit).reduce((a, b) => a + b, 0) + pointsValue;
-                                                const remainingTotal = Math.max(0, total - paid + paymentSplit.cash);
-
-                                                // Generate smart cash suggestions
-                                                const generateSuggestions = (amount: number) => {
-                                                    const suggestions: number[] = [];
-                                                    const nearest10k = Math.ceil(amount / 10000) * 10000;
-                                                    if (nearest10k > amount) suggestions.push(nearest10k);
-                                                    const nearest20k = Math.ceil(amount / 20000) * 20000;
-                                                    if (nearest20k > amount && !suggestions.includes(nearest20k)) suggestions.push(nearest20k);
-                                                    const nearest50k = Math.ceil(amount / 50000) * 50000;
-                                                    if (nearest50k > amount && !suggestions.includes(nearest50k)) suggestions.push(nearest50k);
-                                                    const nearest100k = Math.ceil(amount / 100000) * 100000;
-                                                    if (nearest100k > amount && !suggestions.includes(nearest100k)) suggestions.push(nearest100k);
-                                                    [200000, 500000, 1000000].forEach(val => {
-                                                        if (val > amount && !suggestions.includes(val)) suggestions.push(val);
-                                                    });
-                                                    return suggestions.sort((a, b) => a - b).slice(0, 8);
-                                                };
-
-                                                const suggestions = generateSuggestions(remainingTotal);
-
-                                                return (
-                                                    <div className="grid grid-cols-4 gap-1 pt-1 border-t border-dashed border-gray-100">
-                                                        {suggestions.map(amount => (
-                                                            <button
-                                                                key={amount}
-                                                                onClick={() => {
-                                                                    setCashReceived(amount);
-                                                                    setManualCash(amount.toLocaleString('vi-VN'));
-                                                                    setPaymentSplit(prev => ({ ...prev, cash: amount }));
-                                                                }}
-                                                                className="py-2 bg-gray-50 border border-gray-200 hover:border-green-500 hover:text-green-700 hover:bg-green-100 text-gray-600 font-bold rounded text-[11px] transition-all"
-                                                            >
-                                                                {formatVND(amount)}
-                                                            </button>
-                                                        ))}
-                                                    </div>
-                                                );
-                                            })()}
-                                        </div>
-                                    )}
-
-                                    {/* Non-Cash Payment Areas - Transfer */}
-                                    {paymentMethod === 'transfer' && (
-                                        <div className="space-y-2 animation-fade-in bg-white border border-gray-100 rounded-xl p-2">
-                                            <div className="flex justify-between items-center text-sm gap-4">
-                                                <span className="text-blue-700 whitespace-nowrap font-bold">🏦 Tiền chuyển khoản</span>
-                                                <CurrencyInput
-                                                    className="w-28 text-right border border-blue-200 rounded-lg px-2 py-1 text-base focus:outline-none focus:border-blue-500 font-bold"
-                                                    value={paymentSplit.transfer || ''}
-                                                    onValueChange={(val) => setPaymentSplit(prev => ({ ...prev, transfer: val }))}
-                                                    placeholder="0"
-                                                    autoFocus
-                                                />
-                                            </div>
-
-                                            {/* Numpad + Payment Summary Layout */}
-                                            <div className="flex gap-2">
-                                                {/* Numpad - 50% width */}
-                                                <div className="w-1/2">
-                                                    <div className="grid grid-cols-3 gap-0.5">
-                                                        {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => (
-                                                            <button key={n} onClick={() => {
-                                                                const newVal = (paymentSplit.transfer || 0) * 10 + n;
-                                                                setPaymentSplit(prev => ({ ...prev, transfer: newVal }));
-                                                            }} className="h-10 bg-white rounded text-sm font-bold hover:bg-blue-50 text-gray-700 transition-colors border border-gray-200 active:scale-95">{n}</button>
-                                                        ))}
-                                                        <button onClick={() => setPaymentSplit(prev => ({ ...prev, transfer: 0 }))} className="h-10 bg-red-50 text-red-500 rounded text-sm font-bold hover:bg-red-100 transition-colors border border-red-100 active:scale-95">C</button>
-                                                        <button onClick={() => {
-                                                            const newVal = (paymentSplit.transfer || 0) * 10;
-                                                            setPaymentSplit(prev => ({ ...prev, transfer: newVal }));
-                                                        }} className="h-10 bg-white rounded text-sm font-bold hover:bg-blue-50 text-gray-700 transition-colors border border-gray-200 active:scale-95">0</button>
-                                                        <button onClick={() => {
-                                                            const newVal = (paymentSplit.transfer || 0) * 1000;
-                                                            setPaymentSplit(prev => ({ ...prev, transfer: newVal }));
-                                                        }} className="h-10 bg-white rounded text-sm font-bold hover:bg-blue-50 text-gray-700 transition-colors border border-gray-200 active:scale-95">000</button>
-                                                    </div>
-                                                </div>
-
-                                                {/* Payment Summary - same as cash */}
-                                                <div className="w-1/2 bg-blue-50 rounded-lg p-2 border border-blue-100">
-                                                    <div className="text-[10px] font-bold text-blue-600 mb-1 uppercase">Chi tiết thanh toán</div>
-                                                    <div className="space-y-1 text-xs max-h-24 overflow-y-auto">
-                                                        {paymentSplit.cash > 0 && (
-                                                            <div className="flex justify-between items-center text-green-700 group">
-                                                                <span>💵 Mặt</span>
-                                                                <div className="flex items-center gap-1">
-                                                                    <span className="font-bold min-w-[80px] text-right">{formatVND(paymentSplit.cash)}</span>
-                                                                    <button onClick={() => {
-                                                                        const amt = paymentSplit.cash;
-                                                                        setPaymentSplit(prev => ({ ...prev, cash: 0, transfer: (prev.transfer || 0) + amt }));
-                                                                    }} className="text-red-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity text-xs">✕</button>
-                                                                </div>
-                                                            </div>
-                                                        )}
-                                                        {paymentSplit.transfer > 0 && (
-                                                            <div className="flex justify-between items-center text-blue-700 group">
-                                                                <span>🏦 CK</span>
-                                                                <div className="flex items-center gap-1">
-                                                                    <span className="font-bold min-w-[80px] text-right">{formatVND(paymentSplit.transfer)}</span>
-                                                                    <button onClick={() => setPaymentSplit(prev => ({ ...prev, transfer: 0 }))} className="text-red-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity text-xs">✕</button>
-                                                                </div>
-                                                            </div>
-                                                        )}
-                                                        {paymentSplit.card > 0 && (
-                                                            <div className="flex justify-between items-center text-purple-700 group">
-                                                                <span>💳 Thẻ</span>
-                                                                <div className="flex items-center gap-1">
-                                                                    <span className="font-bold min-w-[80px] text-right">{formatVND(paymentSplit.card)}</span>
-                                                                    <button onClick={() => {
-                                                                        const amt = paymentSplit.card;
-                                                                        setPaymentSplit(prev => ({ ...prev, card: 0, transfer: (prev.transfer || 0) + amt }));
-                                                                    }} className="text-red-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity text-xs">✕</button>
-                                                                </div>
-                                                            </div>
-                                                        )}
-                                                        {pointsToUse > 0 && loyalty && (
-                                                            <div className="flex justify-between items-center text-orange-700 group">
-                                                                <span>⭐ {pointsToUse} điểm</span>
-                                                                <div className="flex items-center gap-1">
-                                                                    <span className="font-bold min-w-[80px] text-right">{formatVND(pointsToUse * (loyalty.redemptionRate || 1000))}</span>
-                                                                    <button onClick={() => setPointsToUse(0)} className="text-red-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity text-xs">✕</button>
-                                                                </div>
-                                                            </div>
-                                                        )}
-                                                        {paymentSplit.debt > 0 && (
-                                                            <div className="flex justify-between items-center text-red-700 group">
-                                                                <span>📝 Nợ</span>
-                                                                <div className="flex items-center gap-1">
-                                                                    <span className="font-bold min-w-[80px] text-right">{formatVND(paymentSplit.debt)}</span>
-                                                                    <button onClick={() => {
-                                                                        const amt = paymentSplit.debt;
-                                                                        setPaymentSplit(prev => ({ ...prev, debt: 0, transfer: (prev.transfer || 0) + amt }));
-                                                                    }} className="text-red-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity text-xs">✕</button>
-                                                                </div>
-                                                            </div>
-                                                        )}
-                                                        {(() => {
-                                                            const pointsValue = pointsToUse * (loyalty?.redemptionRate || 1000);
-                                                            const paid = Object.values(paymentSplit).reduce((a, b) => a + b, 0) + pointsValue;
-                                                            const remaining = Math.max(0, total - paid);
-                                                            if (remaining > 0) {
-                                                                return (
-                                                                    <div className="flex justify-between items-center text-gray-500 pt-1 border-t border-blue-200">
-                                                                        <span>Còn thiếu</span>
-                                                                        <span className="font-bold text-red-500 min-w-[80px] text-right">{formatVND(remaining)}</span>
-                                                                    </div>
-                                                                );
-                                                            }
-                                                            return null;
-                                                        })()}
-                                                    </div>
-                                                    <div className="mt-1 pt-1 border-t border-blue-200">
-                                                        <div className="flex justify-between items-center text-xs">
-                                                            <span className="font-bold text-gray-700">Tổng</span>
-                                                            <span className="font-black text-green-600 min-w-[80px] text-right">{formatVND(Object.values(paymentSplit).reduce((a, b) => a + b, 0) + pointsToUse * (loyalty?.redemptionRate || 1000))}</span>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    )}
-
-                                    {/* Card Payment */}
-                                    {paymentMethod === 'card' && (
-                                        <div className="space-y-2 animation-fade-in bg-white border border-gray-100 rounded-xl p-2">
-                                            <div className="flex justify-between items-center text-sm gap-4">
-                                                <span className="text-purple-700 whitespace-nowrap font-bold">💳 Tiền quẹt thẻ</span>
-                                                <CurrencyInput
-                                                    className="w-28 text-right border border-purple-200 rounded-lg px-2 py-1 text-base focus:outline-none focus:border-purple-500 font-bold"
-                                                    value={paymentSplit.card || ''}
-                                                    onValueChange={(val) => setPaymentSplit(prev => ({ ...prev, card: val }))}
-                                                    placeholder="0"
-                                                    autoFocus
-                                                />
-                                            </div>
-
-                                            {/* Numpad + Payment Summary Layout */}
-                                            <div className="flex gap-2">
-                                                {/* Numpad - 50% width */}
-                                                <div className="w-1/2">
-                                                    <div className="grid grid-cols-3 gap-0.5">
-                                                        {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => (
-                                                            <button key={n} onClick={() => {
-                                                                const newVal = (paymentSplit.card || 0) * 10 + n;
-                                                                setPaymentSplit(prev => ({ ...prev, card: newVal }));
-                                                            }} className="h-10 bg-white rounded text-sm font-bold hover:bg-purple-50 text-gray-700 transition-colors border border-gray-200 active:scale-95">{n}</button>
-                                                        ))}
-                                                        <button onClick={() => setPaymentSplit(prev => ({ ...prev, card: 0 }))} className="h-10 bg-red-50 text-red-500 rounded text-sm font-bold hover:bg-red-100 transition-colors border border-red-100 active:scale-95">C</button>
-                                                        <button onClick={() => {
-                                                            const newVal = (paymentSplit.card || 0) * 10;
-                                                            setPaymentSplit(prev => ({ ...prev, card: newVal }));
-                                                        }} className="h-10 bg-white rounded text-sm font-bold hover:bg-purple-50 text-gray-700 transition-colors border border-gray-200 active:scale-95">0</button>
-                                                        <button onClick={() => {
-                                                            const newVal = (paymentSplit.card || 0) * 1000;
-                                                            setPaymentSplit(prev => ({ ...prev, card: newVal }));
-                                                        }} className="h-10 bg-white rounded text-sm font-bold hover:bg-purple-50 text-gray-700 transition-colors border border-gray-200 active:scale-95">000</button>
-                                                    </div>
-                                                </div>
-
-                                                {/* Payment Summary */}
-                                                <div className="w-1/2 bg-purple-50 rounded-lg p-2 border border-purple-100">
-                                                    <div className="text-[10px] font-bold text-purple-600 mb-1 uppercase">Chi tiết thanh toán</div>
-                                                    <div className="space-y-1 text-xs max-h-24 overflow-y-auto">
-                                                        {paymentSplit.cash > 0 && (
-                                                            <div className="flex justify-between items-center text-green-700 group">
-                                                                <span>💵 Mặt</span>
-                                                                <div className="flex items-center gap-1">
-                                                                    <span className="font-bold min-w-[80px] text-right">{formatVND(paymentSplit.cash)}</span>
-                                                                    <button onClick={() => {
-                                                                        const amt = paymentSplit.cash;
-                                                                        // Add to current payment method (not card)
-                                                                        setPaymentSplit(prev => {
-                                                                            const pm = paymentMethod as string;
-                                                                            const target = pm === 'transfer' ? 'cash' : pm;
-                                                                            if (target === 'debt') return { ...prev, cash: 0 };
-                                                                            return { ...prev, cash: 0, [target]: (prev[target as keyof typeof prev] || 0) + amt };
-                                                                        });
-                                                                    }} className="text-red-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity text-xs">✕</button>
-                                                                </div>
-                                                            </div>
-                                                        )}
-                                                        {paymentSplit.transfer > 0 && (
-                                                            <div className="flex justify-between items-center text-blue-700 group">
-                                                                <span>🏦 CK</span>
-                                                                <div className="flex items-center gap-1">
-                                                                    <span className="font-bold min-w-[80px] text-right">{formatVND(paymentSplit.transfer)}</span>
-                                                                    <button onClick={() => {
-                                                                        const amt = paymentSplit.transfer;
-                                                                        // Add to current payment method
-                                                                        setPaymentSplit(prev => {
-                                                                            const pm = paymentMethod as string;
-                                                                            const target = pm === 'transfer' ? 'cash' : pm;
-                                                                            if (target === 'debt') return { ...prev, transfer: 0 };
-                                                                            return { ...prev, transfer: 0, [target]: (prev[target as keyof typeof prev] || 0) + amt };
-                                                                        });
-                                                                    }} className="text-red-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity text-xs">✕</button>
-                                                                </div>
-                                                            </div>
-                                                        )}
-                                                        {paymentSplit.card > 0 && (
-                                                            <div className="flex justify-between items-center text-purple-700 group">
-                                                                <span>💳 Thẻ</span>
-                                                                <div className="flex items-center gap-1">
-                                                                    <span className="font-bold min-w-[80px] text-right">{formatVND(paymentSplit.card)}</span>
-                                                                    <button onClick={() => {
-                                                                        const amt = paymentSplit.card;
-                                                                        // Add to current payment method
-                                                                        setPaymentSplit(prev => {
-                                                                            const target = (paymentMethod === 'card' ? 'cash' : paymentMethod) as string;
-                                                                            if (target === 'debt') return { ...prev, card: 0 };
-                                                                            return { ...prev, card: 0, [target]: (prev[target as keyof typeof prev] || 0) + amt };
-                                                                        });
-                                                                    }} className="text-red-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity text-xs">✕</button>
-                                                                </div>
-                                                            </div>
-                                                        )}
-                                                        {pointsToUse > 0 && loyalty && (
-                                                            <div className="flex justify-between items-center text-orange-700 group">
-                                                                <span>⭐ {pointsToUse} điểm</span>
-                                                                <div className="flex items-center gap-1">
-                                                                    <span className="font-bold min-w-[80px] text-right">{formatVND(pointsToUse * (loyalty.redemptionRate || 1000))}</span>
-                                                                    <button onClick={() => {
-                                                                        // Add points value back to current payment method
-                                                                        const pointsValue = pointsToUse * (loyalty?.redemptionRate || 1000);
-                                                                        const pm = paymentMethod as string;
-                                                                        if (pm && pm !== 'debt') {
-                                                                            setPaymentSplit(prev => ({
-                                                                                ...prev,
-                                                                                [paymentMethod]: (prev[paymentMethod as keyof typeof prev] || 0) + pointsValue
-                                                                            }));
-                                                                        }
-                                                                        setPointsToUse(0);
-                                                                    }} className="text-red-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity text-xs">✕</button>
-                                                                </div>
-                                                            </div>
-                                                        )}
-                                                        {paymentSplit.debt > 0 && (
-                                                            <div className="flex justify-between items-center text-red-700 group">
-                                                                <span>📝 Nợ</span>
-                                                                <div className="flex items-center gap-1">
-                                                                    <span className="font-bold min-w-[80px] text-right">{formatVND(paymentSplit.debt)}</span>
-                                                                    <button onClick={() => {
-                                                                        const amt = paymentSplit.debt;
-                                                                        // Add to current payment method
-                                                                        setPaymentSplit(prev => {
-                                                                            const pm = paymentMethod as string;
-                                                                            const target = pm === 'debt' ? 'cash' : pm;
-                                                                            return { ...prev, debt: 0, [target]: (prev[target as keyof typeof prev] || 0) + amt };
-                                                                        });
-                                                                    }} className="text-red-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity text-xs">✕</button>
-                                                                </div>
-                                                            </div>
-                                                        )}
-                                                        {(() => {
-                                                            const pointsValue = pointsToUse * (loyalty?.redemptionRate || 1000);
-                                                            const paid = Object.values(paymentSplit).reduce((a, b) => a + b, 0) + pointsValue;
-                                                            const remaining = Math.max(0, total - paid);
-                                                            if (remaining > 0) {
-                                                                return (
-                                                                    <div className="flex justify-between items-center text-gray-500 pt-1 border-t border-purple-200">
-                                                                        <span>Còn thiếu</span>
-                                                                        <span className="font-bold text-red-500 min-w-[80px] text-right">{formatVND(remaining)}</span>
-                                                                    </div>
-                                                                );
-                                                            }
-                                                            return null;
-                                                        })()}
-                                                    </div>
-                                                    <div className="mt-1 pt-1 border-t border-purple-200">
-                                                        <div className="flex justify-between items-center text-xs">
-                                                            <span className="font-bold text-gray-700">Tổng</span>
-                                                            <span className="font-black text-green-600 min-w-[80px] text-right">{formatVND(Object.values(paymentSplit).reduce((a, b) => a + b, 0) + pointsToUse * (loyalty?.redemptionRate || 1000))}</span>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    )}
-
-                                    {/* Debt Payment - NO numpad, auto-calculate */}
-                                    {paymentMethod === 'debt' && (
-                                        <div className="space-y-2 animation-fade-in bg-red-50 border border-red-100 rounded-xl p-3">
-                                            <div className="flex justify-between items-center">
-                                                <span className="text-red-700 font-bold flex items-center gap-2">
-                                                    <span className="text-xl">📝</span> Ghi nợ
-                                                </span>
-                                                <span className="text-xl font-black text-red-700">
-                                                    {formatVND((() => {
-                                                        const pointsValue = pointsToUse * (loyalty?.redemptionRate || 1000);
-                                                        const otherPayments = Object.entries(paymentSplit)
-                                                            .filter(([k]) => k !== 'debt')
-                                                            .reduce((a, [, v]) => a + v, 0) + pointsValue;
-                                                        const remaining = Math.max(0, total - otherPayments);
-                                                        if (paymentSplit.debt !== remaining) {
-                                                            setPaymentSplit(prev => ({ ...prev, debt: remaining }));
-                                                        }
-                                                        return remaining;
-                                                    })())}
-                                                </span>
-                                            </div>
-
-                                            {/* Payment breakdown for debt */}
-                                            <div className="bg-white rounded-lg p-2 border border-red-100">
-                                                <div className="text-[10px] font-bold text-red-600 mb-1 uppercase">Chi tiết thanh toán</div>
-                                                <div className="space-y-1 text-xs">
-                                                    {paymentSplit.cash > 0 && (
-                                                        <div className="flex justify-between items-center text-green-700 group">
-                                                            <span>💵 Mặt</span>
-                                                            <div className="flex items-center gap-1">
-                                                                <span className="font-bold min-w-[80px] text-right">{formatVND(paymentSplit.cash)}</span>
-                                                                <button onClick={() => setPaymentSplit(prev => ({ ...prev, cash: 0 }))} className="text-red-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity text-xs">✕</button>
-                                                            </div>
-                                                        </div>
-                                                    )}
-                                                    {paymentSplit.transfer > 0 && (
-                                                        <div className="flex justify-between items-center text-blue-700 group">
-                                                            <span>🏦 CK</span>
-                                                            <div className="flex items-center gap-1">
-                                                                <span className="font-bold min-w-[80px] text-right">{formatVND(paymentSplit.transfer)}</span>
-                                                                <button onClick={() => setPaymentSplit(prev => ({ ...prev, transfer: 0 }))} className="text-red-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity text-xs">✕</button>
-                                                            </div>
-                                                        </div>
-                                                    )}
-                                                    {paymentSplit.card > 0 && (
-                                                        <div className="flex justify-between items-center text-purple-700 group">
-                                                            <span>💳 Thẻ</span>
-                                                            <div className="flex items-center gap-1">
-                                                                <span className="font-bold min-w-[80px] text-right">{formatVND(paymentSplit.card)}</span>
-                                                                <button onClick={() => setPaymentSplit(prev => ({ ...prev, card: 0 }))} className="text-red-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity text-xs">✕</button>
-                                                            </div>
-                                                        </div>
-                                                    )}
-                                                    {pointsToUse > 0 && loyalty && (
-                                                        <div className="flex justify-between items-center text-orange-700 group">
-                                                            <span>⭐ {pointsToUse} điểm</span>
-                                                            <div className="flex items-center gap-1">
-                                                                <span className="font-bold min-w-[80px] text-right">{formatVND(pointsToUse * (loyalty.redemptionRate || 1000))}</span>
-                                                                <button onClick={() => setPointsToUse(0)} className="text-red-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity text-xs">✕</button>
-                                                            </div>
-                                                        </div>
-                                                    )}
-                                                    {paymentSplit.debt > 0 && (
-                                                        <div className="flex justify-between items-center text-red-700 pt-1 border-t border-red-200">
-                                                            <span className="font-bold">📝 Ghi nợ</span>
-                                                            <span className="font-bold min-w-[80px] text-right">{formatVND(paymentSplit.debt)}</span>
-                                                        </div>
-                                                    )}
-                                                </div>
-                                                <div className="mt-1 pt-1 border-t border-red-200">
-                                                    <div className="flex justify-between items-center text-xs">
-                                                        <span className="font-bold text-gray-700">Tổng</span>
-                                                        <span className="font-black text-green-600 min-w-[80px] text-right">{formatVND(Object.values(paymentSplit).reduce((a, b) => a + b, 0) + pointsToUse * (loyalty?.redemptionRate || 1000))}</span>
-                                                    </div>
-                                                </div>
-                                            </div>
-
-                                            {customer ? (
-                                                <div className="text-xs text-red-600 pt-1 border-t border-red-200">
-                                                    Ghi nợ cho <span className="font-bold">{customer.name}</span>
-                                                    {customer.debt_balance > 0 && (
-                                                        <span className="ml-2 text-red-500">(Nợ cũ: {formatVND(customer.debt_balance)})</span>
-                                                    )}
-                                                </div>
-                                            ) : (
-                                                <div className="text-xs text-red-600 font-bold pt-1 border-t border-red-200">
-                                                    ⚠ Vui lòng chọn khách hàng!
-                                                </div>
-                                            )}
-                                        </div>
-                                    )}
-
-                                    {/* Order Note - Simple clean input */}
-                                    <div className="flex items-center gap-2 px-3 py-2">
-                                        <span className="text-gray-400">📝</span>
-                                        <input
-                                            type="text"
-                                            value={orderNote}
-                                            onChange={(e) => setOrderNote(e.target.value)}
-                                            placeholder="Ghi chú đơn hàng..."
-                                            className="flex-1 bg-transparent border-none text-sm p-0 focus:ring-0 focus:outline-none placeholder-gray-400 text-gray-700"
-                                        />
-                                    </div>
-                                </div>
-                            )}
-
-                            {/* Spacer for scroll */}
-                            <div className="h-6"></div>
-                        </div>
-
-                        {/* Footer Divider Block */}
-                        <div className="h-2 bg-gradient-to-b from-gray-100 to-gray-50 shrink-0"></div>
-
-                        {/* Footer - Fixed at bottom */}
-                        <div className="p-3 bg-white relative z-30">
-                            <div className="flex items-center justify-between mb-2 px-1">
-                                <div className="flex items-center gap-2">
-                                    <input
-                                        type="checkbox"
-                                        id="printReceipt"
-                                        checked={shouldPrintReceipt}
-                                        onChange={(e) => setShouldPrintReceipt(e.target.checked)}
-                                        className="w-4 h-4 text-green-600 rounded focus:ring-green-500"
-                                    />
-                                    <label htmlFor="printReceipt" className="text-sm font-medium text-gray-600 select-none cursor-pointer">In hóa đơn</label>
-                                </div>
-
-                                {/* Delivery Mode Toggle - One-time trigger */}
-                                <button
-                                    onClick={() => setIsDeliveryMode(!isDeliveryMode)}
-                                    className={cn(
-                                        "flex items-center gap-1.5 px-3 py-1.5 rounded-lg border transition-all text-sm font-bold shadow-sm mx-2",
-                                        isDeliveryMode
-                                            ? "bg-slate-600 border-slate-600 text-white ring-2 ring-slate-200"
-                                            : "bg-white border-gray-300 text-gray-600 hover:bg-gray-50"
-                                    )}
-                                >
-                                    <span className={cn("w-4 h-4 rounded border flex items-center justify-center transition-colors", isDeliveryMode ? "bg-white border-white" : "border-gray-400 bg-gray-50")}>
-                                        {isDeliveryMode && <svg className="w-3 h-3 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>}
-                                    </span>
-                                    <span>Bán giao ngay</span>
-                                </button>
-
-                                {/* Change Due - Right - More Prominent */}
-                                {(() => {
-                                    const remainingTotal = Math.max(0, total - pointsToUse * (loyalty?.redemptionRate || 1000));
-                                    const changeDue = Math.max(0, cashReceived - remainingTotal);
-                                    return (
-                                        <div className="flex items-center gap-3 bg-red-50 px-3 py-1.5 rounded-lg border border-red-200">
-                                            <span className="text-sm font-semibold text-red-700">Tiền thừa trả khách</span>
-                                            <span className={cn(
-                                                "font-black text-xl",
-                                                changeDue > 0 ? "text-red-600" : "text-gray-400"
-                                            )}>
-                                                {formatVND(changeDue)}
-                                            </span>
-                                        </div>
-                                    );
-                                })()}
-                            </div>
-
-
-
-                            <div className="flex gap-3">
-                                <button
-                                    className="flex-1 py-3.5 border border-blue-300 text-blue-600 font-bold rounded-xl hover:bg-blue-50 text-xs uppercase tracking-wider bg-blue-50/50 shadow-sm flex items-center justify-center gap-2 transition-all"
-                                    onClick={async () => {
-                                        if (cartItems.length === 0) return;
-
-                                        // Generate temporary order object for printing
-                                        const tempOrder: any = {
-                                            id: 'PROVISIONAL',
-                                            order_number: 'TẠM TÍNH',
-                                            created_at: new Date().toISOString(),
-                                            customer: customer || undefined,
-                                            order_items: cartItems.map(item => ({
-                                                product: item.product,
-                                                quantity: item.quantity,
-                                                unit_price: item.unit_price,
-                                                unit_name: item.unitName || item.product.base_unit
-                                            })),
-                                            total_amount: total,
-                                            discount_amount: discountAmount,
-                                            final_amount: total - discountAmount,
-                                            payment_method: paymentMethod,
-                                            points_earned: loyalty && customer ? Math.floor(total / (loyalty.pointsPerAmount || 10000)) : 0,
-                                            customer_id: customer?.id
-                                        };
-
-                                        await printProvisionalReceipt(tempOrder, user?.name || user?.email || 'Thu ngân');
-                                    }}
-                                >
-                                    ⎙ In tạm tính (F9)
-                                </button>
-                                <button
-                                    className="px-5 py-3.5 bg-amber-500 hover:bg-amber-600 border border-amber-600 text-white font-bold rounded-xl text-xs uppercase tracking-wider shadow-sm transition-all flex items-center justify-center gap-2"
-                                    onClick={handleSaveDraft}
-                                    title="Lưu tạm đơn hàng"
-                                >
-                                    💾 Lưu nháp
-                                </button>
-                                <button
-                                    onClick={async () => {
-                                        console.log('Payment button clicked!', { cartItems: cartItems.length, isSubmitting, paymentMethod });
-                                        if (cartItems.length === 0) {
-                                            alert('Giỏ hàng trống! Vui lòng thêm sản phẩm.');
-                                            return;
-                                        }
-                                        if (paymentMethod === 'debt' && !customer) {
-                                            alert('Vui lòng chọn khách hàng để ghi nợ!');
-                                            return;
-                                        }
-                                        try {
-                                            console.log('Calling submitOrder...');
-
-                                            // Validation for Delivery Mode
-                                            if (isDeliveryMode) {
-                                                if (!deliveryInfo.recipient_name || !deliveryInfo.recipient_phone || !deliveryInfo.shipping_address) {
-                                                    alert('Vui lòng nhập đầy đủ: Tên, SĐT và Địa chỉ người nhận!');
-                                                    return;
-                                                }
-                                            }
-
-                                            // Set points discount before submitting
-                                            if (pointsToUse > 0 && loyalty) {
-                                                setPointsDiscount(pointsToUse, pointsToUse * (loyalty.redemptionRate || 1000));
-                                            }
-
-                                            // Prepare submit options
-                                            const submitOptions = isDeliveryMode ? {
-                                                status: 'pending_approval' as const,
-                                                is_delivery: true,
-                                                delivery_info: deliveryInfo,
-                                                note: orderNote,
-                                                paymentSplit
-                                            } : {
-                                                note: orderNote,
-                                                paymentSplit
-                                            };
-
-                                            const order = await submitOrder(submitOptions);
-                                            console.log('submitOrder result:', order);
-                                            if (!order) {
-                                                alert('Lỗi: Không thể lưu đơn hàng. Vui lòng thử lại!');
-                                            } else {
-                                                // Success - no alert, just clear form
-                                                setManualCash('');
-                                                setPointsToUse(0);
-                                                setOrderNote('');
-                                                setWholesaleMode(false); // Reset wholesale mode for next order
-                                                setIsDeliveryMode(false); // Reset delivery mode
-                                                setDeliveryInfo({ recipient_name: '', recipient_phone: '', shipping_address: '', delivery_notes: '' }); // Reset delivery info
-                                                // Reset payment split
-                                                setPaymentSplit({ cash: 0, transfer: 0, card: 0, debt: 0, points: 0 });
-
-                                                // Print receipt if checkbox checked AND NOT DELIVERY (Delivery usually prints shipping label later)
-                                                // But logical to print "Phiếu tạm tính" or "Phiếu đặt hàng"? 
-                                                // For now, allow print if checked
-                                                if (shouldPrintReceipt) {
-                                                    // TODO: Maybe different print template for Delivery Order?
-                                                    printSalesReceipt(order, user?.name || user?.email || 'Thu ngân');
-                                                }
-                                            }
-                                        } catch (e: any) {
-                                            console.error('Payment error:', e);
-                                            alert('Lỗi hệ thống: ' + (e.message || JSON.stringify(e)));
-                                        }
-                                    }}
-                                    disabled={isSubmitting || cartItems.length === 0}
-                                    className={cn(
-                                        "flex-[2] py-3.5 rounded-xl font-bold text-lg text-white shadow-lg uppercase tracking-wider",
-                                        (isSubmitting || cartItems.length === 0)
-                                            ? "bg-gray-400 cursor-not-allowed"
-                                            : isDeliveryMode
-                                                ? "bg-amber-500 hover:bg-amber-600 shadow-amber-200"
-                                                : "bg-green-600 hover:bg-green-700 shadow-green-200"
-                                    )}
-                                >
-                                    {isSubmitting
-                                        ? 'Đang xử lý...'
-                                        : isDeliveryMode
-                                            ? <span className="flex flex-col items-center leading-none text-sm gap-0.5"><span>LƯU ĐƠN GIAO</span><span className="text-[10px] font-normal opacity-90">Chờ duyệt</span></span>
-                                            : 'THANH TOÁN (F1)'}
-                                </button>
-                            </div>
-                        </div>
-                    </div>
+                    />
                 </div >
-
                 {/* Close Order Confirmation Modal */}
                 {
                     showCloseConfirm !== null && (
@@ -2947,133 +1599,8 @@ export function POSPage() {
                     )
                 }
 
-                {/* Drafts List Modal */}
-                {
-                    showDraftsList && (
-                        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] p-4">
-                            <div className="bg-white rounded-2xl w-full max-w-3xl shadow-2xl flex flex-col max-h-[85vh]">
-                                <div className="p-4 border-b flex justify-between items-center bg-gray-50 rounded-t-2xl">
-                                    <div className="flex items-center gap-2">
-                                        <span className="text-2xl">📋</span>
-                                        <h2 className="font-bold text-lg">Danh sách đơn chờ ({draftOrders.length})</h2>
-                                    </div>
-                                    <button onClick={() => setShowDraftsList(false)} className="text-2xl text-gray-400 hover:text-gray-600 w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-200">×</button>
-                                </div>
-                                <div className="p-0 overflow-y-auto flex-1 bg-gray-50/50">
-                                    {draftOrders.length === 0 ? (
-                                        <div className="flex flex-col items-center justify-center h-64 text-gray-400">
-                                            <span className="text-6xl mb-4 opacity-50">📭</span>
-                                            <p className="font-medium">Không có đơn hàng nào đang chờ</p>
-                                            <p className="text-sm mt-1">Lưu đơn nháp để xem tại đây</p>
-                                        </div>
-                                    ) : (
-                                        <div className="grid gap-4 p-4">
-                                            {draftOrders.map((draft, idx) => (
-                                                <div key={idx} className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 hover:border-green-300 transition-all flex flex-col sm:flex-row gap-4 items-start sm:items-center">
-                                                    <div className="w-12 h-12 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center text-xl font-bold flex-shrink-0">
-                                                        #{idx + 1}
-                                                    </div>
-
-                                                    <div className="flex-1 min-w-0 grid grid-cols-2 sm:grid-cols-4 gap-4 w-full">
-                                                        <div>
-                                                            <p className="text-xs text-gray-400 font-medium uppercase tracking-wider">Thời gian</p>
-                                                            <p className="font-medium text-gray-700">
-                                                                {new Date(draft.timestamp || draft.order.created_at || '').toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
-                                                            </p>
-                                                            <p className="text-xs text-gray-400">
-                                                                {new Date(draft.timestamp || '').toLocaleDateString('vi-VN')}
-                                                            </p>
-                                                        </div>
-
-                                                        <div>
-                                                            <p className="text-xs text-gray-400 font-medium uppercase tracking-wider">Khách hàng</p>
-                                                            <p className="font-medium text-gray-900 truncate">
-                                                                {draft.customer ? draft.customer.name : 'Khách lẻ'}
-                                                            </p>
-                                                            {draft.customer && <p className="text-xs text-gray-400">{draft.customer.phone}</p>}
-                                                        </div>
-
-                                                        <div className="col-span-2 sm:col-span-1">
-                                                            <p className="text-xs text-gray-400 font-medium uppercase tracking-wider">Ghi chú</p>
-                                                            <p className="text-sm text-gray-600 truncate">
-                                                                {draft.note ? `📝 ${draft.note}` : <span className="opacity-50 italic">--</span>}
-                                                            </p>
-                                                        </div>
-
-                                                        <div className="col-span-2 sm:col-span-1 text-left sm:text-right">
-                                                            <p className="text-xs text-gray-400 font-medium uppercase tracking-wider">Tổng tiền</p>
-                                                            <p className="font-bold text-green-600 text-lg">
-                                                                {formatVND(draft.order.total_amount || 0)}
-                                                            </p>
-                                                            <p className="text-xs text-gray-400">{draft.items.length} sản phẩm</p>
-                                                        </div>
-                                                    </div>
-
-                                                    <div className="flex gap-2 w-full sm:w-auto mt-2 sm:mt-0 pt-3 sm:pt-0 border-t sm:border-0 border-gray-100">
-                                                        <button
-                                                            onClick={() => setDraftToDelete(draft.id)}
-                                                            className="flex-1 sm:flex-none px-4 py-2 rounded-lg bg-red-50 text-red-600 font-medium hover:bg-red-100 transition-colors text-sm"
-                                                        >
-                                                            Xóa
-                                                        </button>
-                                                        <button
-                                                            onClick={() => { resumeOrder(draft.id); setShowDraftsList(false); }}
-                                                            className="flex-1 sm:flex-none px-6 py-2 rounded-lg bg-green-600 text-white font-bold hover:bg-green-700 shadow-lg shadow-green-200 transition-colors text-sm"
-                                                        >
-                                                            Tiếp tục
-                                                        </button>
-                                                    </div>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-                        </div>
-                    )
-                }
-
-                {/* Draft Delete Confirmation Modal */}
-                {
-                    draftToDelete && (
-                        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[110] p-4">
-                            <div className="bg-white rounded-2xl w-[400px] max-w-full shadow-2xl overflow-hidden">
-                                <div className="p-6 text-center">
-                                    <span className="text-5xl block mb-4">🗑️</span>
-                                    <h2 className="text-xl font-bold mb-2 break-normal">Xóa đơn chờ?</h2>
-                                    <p className="text-gray-600 text-sm mb-6 break-normal">
-                                        Bạn có chắc chắn muốn xóa đơn chờ này không?
-                                        <br />Hành động này không thể hoàn tác.
-                                    </p>
-                                    <div className="flex gap-3">
-                                        <button
-                                            onClick={() => setDraftToDelete(null)}
-                                            className="flex-1 py-3 rounded-xl bg-gray-100 font-medium hover:bg-gray-200"
-                                        >
-                                            Hủy
-                                        </button>
-                                        <button
-                                            onClick={() => {
-                                                if (draftToDelete) {
-                                                    deleteDraftOrder(draftToDelete);
-                                                    // Auto-close modal if no drafts left
-                                                    const remainingDrafts = draftOrders.filter(d => d.id !== draftToDelete);
-                                                    if (remainingDrafts.length === 0) {
-                                                        setShowDraftsList(false);
-                                                    }
-                                                    setDraftToDelete(null);
-                                                }
-                                            }}
-                                            className="flex-1 py-3 rounded-xl bg-red-500 text-white font-medium hover:bg-red-600 shadow-lg shadow-red-200 whitespace-nowrap"
-                                        >
-                                            Xóa ngay
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    )
-                }
+                {/* Saved Orders Modal (replaces Drafts List & Delete Confirm) */}
+                <SavedOrdersDrawer open={showDraftsList} onOpenChange={setShowDraftsList} />
 
                 {
                     showAddCustomerModal && (
@@ -3097,7 +1624,7 @@ export function POSPage() {
                                     const newCustomer = updatedCustomers.find(c => c.phone === data.phone);
                                     if (newCustomer) {
                                         setCustomer(newCustomer);
-                                        setCustomerSearch(''); // Clear search
+                                        // setCustomerSearch(''); // Clear search - state removed
                                     }
                                 }
                                 setShowAddCustomerModal(false);
@@ -3123,22 +1650,24 @@ export function POSPage() {
                 <ReminderPopup />
 
                 {/* Existing Modals */}
-                {showEditCustomerModal && customer && (
-                    <CustomerModal
-                        customer={customer}
-                        onSave={async (data) => {
-                            await useCustomerStore.getState().updateCustomer(customer.id, data);
-                            // Refresh customer data
-                            const updatedCustomers = useCustomerStore.getState().customers;
-                            const updatedCustomer = updatedCustomers.find(c => c.id === customer.id);
-                            if (updatedCustomer) {
-                                setCustomer(updatedCustomer);
-                            }
-                            setShowEditCustomerModal(false);
-                        }}
-                        onClose={() => setShowEditCustomerModal(false)}
-                    />
-                )}
+                {
+                    showEditCustomerModal && customer && (
+                        <CustomerModal
+                            customer={customer}
+                            onSave={async (data) => {
+                                await useCustomerStore.getState().updateCustomer(customer.id, data);
+                                // Refresh customer data
+                                const updatedCustomers = useCustomerStore.getState().customers;
+                                const updatedCustomer = updatedCustomers.find(c => c.id === customer.id);
+                                if (updatedCustomer) {
+                                    setCustomer(updatedCustomer);
+                                }
+                                setShowEditCustomerModal(false);
+                            }}
+                            onClose={() => setShowEditCustomerModal(false)}
+                        />
+                    )
+                }
 
                 {/* Barcode Selection Modal - shows when multiple products match scanned barcode */}
                 {

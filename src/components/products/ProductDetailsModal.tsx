@@ -1,22 +1,71 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { useStockMovementStore } from '@/stores/stockMovementStore';
-import { canViewCostPrice, canViewPurchasePrice } from '@/stores/authStore';
+import { canViewCostPrice, canViewPurchasePrice, canDeleteProduct, getDeleteErrorMessage } from '@/stores/authStore';
 import { formatVND } from '@/lib/cashReconciliation';
 import type { Product, OrderItem } from '@/types';
 import { cn } from '@/lib/utils';
+import { useAuthStore } from '@/stores/authStore';
+import { useProductStore } from '@/stores/productStore';
+import { Edit2, Check, X, ExternalLink, Trash2, Camera } from 'lucide-react';
+import { toast } from 'sonner';
+import { ConfirmDialog } from '@/components/common/ConfirmDialog';
 
 interface Props {
     product: Product;
     onClose: () => void;
     onEdit: (product: Product) => void;
+    onDelete?: (product: Product) => Promise<void>;
 }
 
-export function ProductDetailsModal({ product, onClose, onEdit }: Props) {
+export function ProductDetailsModal({ product, onClose, onEdit, onDelete }: Props) {
+    const navigate = useNavigate();
+    const { deleteProduct } = useProductStore();
     const [activeTab, setActiveTab] = useState<'info' | 'sales' | 'imports'>('info');
     const [history, setHistory] = useState<any[]>([]);
     const [loading, setLoading] = useState(false);
+    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
     const getMovementsByProduct = useStockMovementStore((s) => s.getMovementsByProduct);
+
+    // Branch Price Edit State
+    const [isEditingPrice, setIsEditingPrice] = useState(false);
+    const [newPrice, setNewPrice] = useState(product.selling_price);
+    const { branchId } = useAuthStore();
+    const { updateBranchPrice } = useProductStore();
+
+    // Creator name state
+    const [creatorName, setCreatorName] = useState<string | null>(product.created_by_name || null);
+
+    // Fetch creator name if not available
+    useEffect(() => {
+        async function fetchCreatorName() {
+            if (!product.created_by || product.created_by_name) return;
+
+            if (supabase) {
+                const { data } = await supabase
+                    .from('user_profiles')
+                    .select('full_name')
+                    .eq('id', product.created_by)
+                    .single();
+
+                if (data?.full_name) {
+                    setCreatorName(data.full_name);
+                }
+            }
+        }
+        fetchCreatorName();
+    }, [product.created_by, product.created_by_name]);
+
+    useEffect(() => {
+        setNewPrice(product.selling_price);
+    }, [product.selling_price]);
+
+    const handleUpdatePrice = async () => {
+        if (!branchId) return;
+        const success = await updateBranchPrice(product.id, newPrice);
+        if (success) setIsEditingPrice(false);
+    };
 
     useEffect(() => {
         if (activeTab === 'info') return;
@@ -37,14 +86,22 @@ export function ProductDetailsModal({ product, onClose, onEdit }: Props) {
                             .limit(50);
                         if (!error) data = items || [];
                     } else {
-                        const { data: moves, error } = await supabase
-                            .from('stock_movements')
-                            .select('*')
+                        // Fetch từ purchase_order_items để có thông tin đơn nhập chi tiết hơn
+                        const { data: poItems, error } = await supabase
+                            .from('purchase_order_items')
+                            .select(`
+                                id,
+                                quantity,
+                                unit_price,
+                                received_quantity,
+                                created_at,
+                                purchase_order_id,
+                                purchase_order:purchase_orders(id, po_number, created_at, status, supplier:suppliers(name))
+                            `)
                             .eq('product_id', product.id)
-                            .in('movement_type', ['purchase', 'import', 'adjustment_in', 'return'])
                             .order('created_at', { ascending: false })
                             .limit(50);
-                        if (!error) data = moves || [];
+                        if (!error) data = poItems || [];
                     }
                 } else {
                     // Demo mode - use stockMovementStore
@@ -91,8 +148,9 @@ export function ProductDetailsModal({ product, onClose, onEdit }: Props) {
     };
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-            <div className="bg-white rounded-2xl w-full max-w-5xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm md:p-4">
+            {/* Mobile: full screen, Desktop: max-w-5xl centered */}
+            <div className="bg-white md:rounded-2xl w-full md:max-w-5xl h-full md:h-auto md:max-h-[90vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
                 {/* Header */}
                 <div className="flex justify-between items-center p-6 border-b bg-white">
                     <div className="flex gap-4 items-center">
@@ -147,14 +205,47 @@ export function ProductDetailsModal({ product, onClose, onEdit }: Props) {
                 <div className="flex-1 overflow-y-auto p-5 bg-gray-50">
                     {activeTab === 'info' && (
                         <div className="space-y-4">
-                            <div className="grid grid-cols-2 gap-4">
+                            {/* Responsive: 1 column on mobile, 2 on desktop */}
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div className="space-y-4">
                                     <div className="bg-white p-5 rounded-2xl border shadow-sm">
                                         <h3 className="text-xs font-bold text-gray-400 mb-3 uppercase tracking-wider">Thông tin giá & mã</h3>
                                         <div className="space-y-3 text-sm">
-                                            <div className="flex justify-between border-b border-dashed border-gray-200 pb-2">
-                                                <span className="text-gray-500">Giá bán lẻ</span>
-                                                <span className="font-bold text-primary text-lg">{formatVND(product.selling_price || 0)}</span>
+                                            <div className="flex justify-between border-b border-dashed border-gray-200 pb-2 items-center">
+                                                <div className="flex flex-col">
+                                                    <span className="text-gray-500">Giá bán lẻ {product.has_price_override ? '(Chi nhánh)' : ''}</span>
+                                                    {product.has_price_override && product.base_price && (
+                                                        <span className="text-xs text-gray-400 line-through">Gốc: {formatVND(product.base_price)}</span>
+                                                    )}
+                                                </div>
+                                                {isEditingPrice ? (
+                                                    <div className="flex items-center gap-2">
+                                                        <input
+                                                            type="number"
+                                                            className="w-24 px-2 py-1 text-sm border rounded focus:ring-2 focus:ring-primary/50 outline-none"
+                                                            value={newPrice}
+                                                            onChange={(e) => setNewPrice(Number(e.target.value))}
+                                                            autoFocus
+                                                        />
+                                                        <button onClick={handleUpdatePrice} className="p-1 text-green-600 hover:bg-green-50 rounded"><Check size={16} /></button>
+                                                        <button onClick={() => setIsEditingPrice(false)} className="p-1 text-red-500 hover:bg-red-50 rounded"><X size={16} /></button>
+                                                    </div>
+                                                ) : (
+                                                    <div className="flex items-center gap-2">
+                                                        <span className={cn("font-bold text-lg", product.has_price_override ? "text-orange-600" : "text-primary")}>
+                                                            {formatVND(product.selling_price || 0)}
+                                                        </span>
+                                                        {branchId && (
+                                                            <button
+                                                                onClick={() => setIsEditingPrice(true)}
+                                                                className="p-1 text-gray-300 hover:text-primary transition-colors"
+                                                                title="Sửa giá tại chi nhánh này"
+                                                            >
+                                                                <Edit2 size={14} />
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                )}
                                             </div>
                                             {canViewPurchasePrice() && (
                                                 <div className="flex justify-between border-b border-dashed border-gray-200 pb-2">
@@ -165,7 +256,7 @@ export function ProductDetailsModal({ product, onClose, onEdit }: Props) {
                                             {canViewCostPrice() && (
                                                 <div className="flex justify-between border-b border-dashed border-gray-200 pb-2">
                                                     <span className="text-gray-500">Giá vốn (bình quân)</span>
-                                                    <span className="font-semibold text-amber-600">{formatVND(product.avg_cost_price || product.cost_price || 0)}</span>
+                                                    <span className="font-semibold text-amber-600">{formatVND(product.avg_cost || product.cost_price || 0)}</span>
                                                 </div>
                                             )}
                                             <div className="flex justify-between border-b border-dashed border-gray-200 pb-2">
@@ -209,30 +300,73 @@ export function ProductDetailsModal({ product, onClose, onEdit }: Props) {
                                 </div>
 
                                 <div className="space-y-4">
-                                    {/* Unit Conversions Section */}
-                                    {product.units && product.units.length > 0 && (
-                                        <div className="bg-white p-5 rounded-2xl border shadow-sm">
-                                            <h3 className="text-xs font-bold text-gray-400 mb-3 uppercase tracking-wider">Đơn vị quy đổi</h3>
+                                    {/* Unit Conversions Section - Only show if has converted units */}
+                                    {product.units && product.units.filter(u => !u.is_base_unit).length > 0 && (
+                                        <div className="bg-gray-50 p-4 rounded-xl">
+                                            <h3 className="text-xs font-bold text-gray-500 mb-3 uppercase tracking-wider">Phiên bản sản phẩm</h3>
                                             <div className="space-y-2">
-                                                {product.units.filter(u => !u.is_base_unit).map((unit) => (
-                                                    <div key={unit.id} className="flex justify-between items-center py-1.5 border-b border-dashed border-gray-200 last:border-0">
-                                                        <div>
-                                                            <div className="flex items-center gap-2">
-                                                                <span className="font-bold text-gray-800">{unit.unit_name}</span>
-                                                                <span className="text-gray-300">=</span>
-                                                                <span className="text-primary font-bold">{unit.conversion_rate} {product.base_unit}</span>
-                                                            </div>
-                                                        </div>
-                                                        <div className="text-right text-sm">
-                                                            {unit.barcode && (
-                                                                <div className="font-mono text-gray-400 text-xs mb-0.5">{unit.barcode}</div>
-                                                            )}
-                                                            {unit.selling_price && (
-                                                                <div className="font-bold text-green-600">{formatVND(unit.selling_price)}</div>
-                                                            )}
+                                                {/* Base Unit */}
+                                                <div className="flex items-center gap-3 p-3 bg-white rounded-lg border border-gray-200">
+                                                    <div className="w-12 h-12 rounded-lg overflow-hidden border bg-gray-50 flex-shrink-0">
+                                                        {product.image_url ? (
+                                                            <img src={product.image_url} alt={product.name} className="w-full h-full object-cover" />
+                                                        ) : (
+                                                            <div className="w-full h-full flex items-center justify-center text-xl bg-gray-100">📦</div>
+                                                        )}
+                                                    </div>
+                                                    <div className="flex-1 min-w-0">
+                                                        <div className="font-bold text-gray-900">{product.base_unit || 'cái'}</div>
+                                                        <div className="text-xs text-gray-500 truncate">SKU: {product.sku || '---'}</div>
+                                                        <div className="text-xs text-gray-400 truncate">BC: {product.barcode || '---'}</div>
+                                                    </div>
+                                                    <div className="text-right flex-shrink-0">
+                                                        <div className="text-lg font-bold text-green-600">{formatVND(product.selling_price)}</div>
+                                                        {canViewPurchasePrice() && product.cost_price > 0 && (
+                                                            <div className="text-xs text-gray-500">Nhập: {formatVND(product.cost_price)}</div>
+                                                        )}
+                                                        <div className="text-xs text-gray-600 mt-0.5">
+                                                            Tồn: <span className={cn("font-bold", product.current_stock <= product.min_stock ? "text-red-600" : "text-green-600")}>{product.current_stock}</span>
+                                                            {' • '}Có thể bán: {Math.max(0, product.current_stock)}
                                                         </div>
                                                     </div>
-                                                ))}
+                                                </div>
+
+                                                {/* Converted Units */}
+                                                {product.units.filter(u => !u.is_base_unit).map((unit) => {
+                                                    const unitStock = Math.floor((product.current_stock || 0) / (unit.conversion_rate || 1));
+                                                    return (
+                                                        <div key={unit.id} className="flex items-center gap-3 p-3 bg-white rounded-lg border border-gray-200">
+                                                            <div className="text-gray-300 text-lg">↳</div>
+                                                            <div className="w-12 h-12 rounded-lg overflow-hidden border bg-gray-50 flex-shrink-0">
+                                                                {unit.image_url ? (
+                                                                    <img src={unit.image_url} alt={unit.unit_name} className="w-full h-full object-cover" />
+                                                                ) : product.image_url ? (
+                                                                    <img src={product.image_url} alt={unit.unit_name} className="w-full h-full object-cover opacity-50" />
+                                                                ) : (
+                                                                    <div className="w-full h-full flex items-center justify-center text-xl bg-gray-100">📦</div>
+                                                                )}
+                                                            </div>
+                                                            <div className="flex-1 min-w-0">
+                                                                <div className="font-bold text-gray-900">
+                                                                    {unit.unit_name}
+                                                                    <span className="text-xs font-normal text-gray-400 ml-1">= {unit.conversion_rate} {product.base_unit}</span>
+                                                                </div>
+                                                                <div className="text-xs text-gray-500 truncate">SKU: {unit.sku || '---'}</div>
+                                                                <div className="text-xs text-gray-400 truncate">BC: {unit.barcode || '---'}</div>
+                                                            </div>
+                                                            <div className="text-right flex-shrink-0">
+                                                                <div className="text-lg font-bold text-green-600">{formatVND(unit.selling_price || 0)}</div>
+                                                                {canViewPurchasePrice() && unit.cost_price && unit.cost_price > 0 && (
+                                                                    <div className="text-xs text-gray-500">Nhập: {formatVND(unit.cost_price)}</div>
+                                                                )}
+                                                                <div className="text-xs text-gray-600 mt-0.5">
+                                                                    Tồn: <span className={cn("font-bold", unitStock < 0 ? "text-red-600" : "text-green-600")}>{unitStock}</span>
+                                                                    {' • '}Có thể bán: {Math.max(0, unitStock)}
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })}
                                             </div>
                                         </div>
                                     )}
@@ -252,20 +386,55 @@ export function ProductDetailsModal({ product, onClose, onEdit }: Props) {
                                             <div className="flex justify-between">
                                                 <span className="text-gray-500">Người tạo</span>
                                                 <span className="font-medium text-blue-600">
-                                                    {(product as any).created_by_name || (product as any).created_by || '---'}
+                                                    {creatorName || '---'}
                                                 </span>
                                             </div>
 
-                                            <div className="mt-6 pt-4 border-t border-gray-100">
+                                            <div className="mt-6 pt-4 border-t border-gray-100 space-y-2">
                                                 <button
                                                     onClick={() => { onClose(); onEdit(product); }}
                                                     className="w-full py-3 bg-primary text-white rounded-xl font-bold hover:bg-primary-dark transition-colors flex items-center justify-center gap-2 shadow-md shadow-primary/20"
                                                 >
-                                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                                                        <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
-                                                    </svg>
+                                                    <Edit2 size={16} />
                                                     Chỉnh sửa sản phẩm
                                                 </button>
+                                                <button
+                                                    onClick={() => {
+                                                        // Check permission first
+                                                        if (!canDeleteProduct(product)) {
+                                                            const errorMsg = getDeleteErrorMessage(product);
+                                                            toast.error(errorMsg || 'Bạn không có quyền xóa sản phẩm này');
+                                                            return;
+                                                        }
+                                                        setShowDeleteConfirm(true);
+                                                    }}
+                                                    className="w-full py-3 bg-red-50 text-red-600 rounded-xl font-bold hover:bg-red-100 transition-colors flex items-center justify-center gap-2 border border-red-200"
+                                                >
+                                                    <Trash2 size={16} />
+                                                    Xóa sản phẩm
+                                                </button>
+
+                                                {/* Delete Confirmation Dialog */}
+                                                <ConfirmDialog
+                                                    isOpen={showDeleteConfirm}
+                                                    title="Xóa sản phẩm?"
+                                                    message={`Bạn có chắc muốn xóa sản phẩm:\n\n"${product.name}"\n\nHành động này không thể hoàn tác!`}
+                                                    confirmText="Xóa"
+                                                    cancelText="Hủy"
+                                                    type="danger"
+                                                    onConfirm={async () => {
+                                                        setShowDeleteConfirm(false);
+                                                        try {
+                                                            await deleteProduct(product.id);
+                                                            toast.success(`Đã xóa sản phẩm "${product.name}"`);
+                                                            onClose();
+                                                        } catch (err: any) {
+                                                            console.error('Delete error:', err);
+                                                            toast.error('Không thể xóa: ' + (err.message || 'Lỗi không xác định'));
+                                                        }
+                                                    }}
+                                                    onCancel={() => setShowDeleteConfirm(false)}
+                                                />
                                             </div>
                                         </div>
                                     </div>
@@ -297,11 +466,22 @@ export function ProductDetailsModal({ product, onClose, onEdit }: Props) {
                                         </thead>
                                         <tbody className="divide-y divide-gray-50">
                                             {history.map((item: any) => (
-                                                <tr key={item.id} className="hover:bg-gray-50/80 border-b border-gray-50 last:border-0 transition-colors">
+                                                <tr
+                                                    key={item.id}
+                                                    className="hover:bg-blue-50 border-b border-gray-50 last:border-0 transition-colors cursor-pointer"
+                                                    onClick={() => {
+                                                        if (item.order_id) {
+                                                            onClose();
+                                                            navigate(`/don-hang?order=${item.order_id}`);
+                                                        }
+                                                    }}
+                                                    title="Bấm để xem chi tiết đơn hàng"
+                                                >
                                                     <td className="px-6 py-4 text-gray-600 font-medium">{formatDate(item.order?.created_at || item.created_at)}</td>
                                                     <td className="px-6 py-4">
-                                                        <span className="font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded-md border border-blue-100">
+                                                        <span className="font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded-md border border-blue-100 inline-flex items-center gap-1">
                                                             {item.order?.order_number || '---'}
+                                                            {item.order_id && <ExternalLink size={12} />}
                                                         </span>
                                                     </td>
                                                     <td className="px-6 py-4 text-right font-bold text-gray-900">{item.quantity}</td>
@@ -331,29 +511,41 @@ export function ProductDetailsModal({ product, onClose, onEdit }: Props) {
                                         <thead className="bg-white border-b border-gray-100 sticky top-0 z-10">
                                             <tr>
                                                 <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Thời gian</th>
-                                                <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Loại giao dịch</th>
+                                                <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Đơn nhập</th>
+                                                <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Nhà cung cấp</th>
                                                 <th className="px-6 py-4 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Số lượng</th>
-                                                <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Ghi chú</th>
+                                                <th className="px-6 py-4 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Giá nhập</th>
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-gray-50">
                                             {history.map((item: any) => (
-                                                <tr key={item.id} className="hover:bg-gray-50/80 border-b border-gray-50 last:border-0 transition-colors">
-                                                    <td className="px-6 py-4 text-gray-600 font-medium">{formatDate(item.created_at)}</td>
-                                                    <td className="px-6 py-4 capitalize">
-                                                        <span className={cn("px-3 py-1 rounded-full text-xs font-bold border",
-                                                            item.movement_type === 'import' ? "bg-green-50 text-green-700 border-green-200" :
-                                                                item.movement_type === 'return' ? "bg-orange-50 text-orange-700 border-orange-200" : "bg-gray-50 text-gray-700 border-gray-200"
-                                                        )}>
-                                                            {item.movement_type === 'import' ? '📥 Nhập hàng' :
-                                                                item.movement_type === 'return' ? '↩️ Khách trả' :
-                                                                    item.movement_type === 'purchase' ? '🛒 Nhập mua' :
-                                                                        item.movement_type === 'adjustment_in' ? '⚖️ Cân bằng kho' :
-                                                                            item.movement_type}
+                                                <tr
+                                                    key={item.id}
+                                                    className="hover:bg-green-50 border-b border-gray-50 last:border-0 transition-colors cursor-pointer"
+                                                    onClick={() => {
+                                                        if (item.purchase_order_id) {
+                                                            onClose();
+                                                            navigate(`/nhap-hang/${item.purchase_order_id}`);
+                                                        }
+                                                    }}
+                                                    title="Bấm để xem chi tiết đơn nhập"
+                                                >
+                                                    <td className="px-6 py-4 text-gray-600 font-medium">{formatDate(item.purchase_order?.created_at || item.created_at)}</td>
+                                                    <td className="px-6 py-4">
+                                                        <span className="font-bold text-green-600 bg-green-50 px-2 py-1 rounded-md border border-green-200 inline-flex items-center gap-1">
+                                                            {item.purchase_order?.po_number || '---'}
+                                                            {item.purchase_order_id && <ExternalLink size={12} />}
                                                         </span>
                                                     </td>
-                                                    <td className="px-6 py-4 text-right font-bold text-primary">+{item.quantity}</td>
-                                                    <td className="px-6 py-4 text-gray-500 truncate max-w-[200px]" title={item.notes}>{item.notes || '---'}</td>
+                                                    <td className="px-6 py-4 text-gray-700">{item.purchase_order?.supplier?.name || '---'}</td>
+                                                    <td className="px-6 py-4 text-right font-bold text-primary">
+                                                        {item.received_quantity > 0 ? (
+                                                            <span>{item.received_quantity}/{item.quantity}</span>
+                                                        ) : (
+                                                            <span>+{item.quantity}</span>
+                                                        )}
+                                                    </td>
+                                                    <td className="px-6 py-4 text-right text-gray-600">{formatVND(item.unit_price)}</td>
                                                 </tr>
                                             ))}
                                         </tbody>

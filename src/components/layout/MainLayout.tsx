@@ -9,6 +9,9 @@ import { useUserStore } from '@/stores/userStore';
 import { useShiftStore } from '@/stores/shiftStore';
 import { useAuthStore } from '@/stores/authStore';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
+import { NotificationBell } from '@/components/notifications/NotificationBell';
+import { useBrandTheme } from '@/hooks/useBrandTheme';
+import { BranchSwitcher } from './BranchSwitcher';
 
 // Navigation items structure
 type NavItem = {
@@ -20,42 +23,53 @@ type NavItem = {
 
 const NAV_ITEMS: NavItem[] = [
     { path: '/', label: 'Tổng quan', icon: DashboardIcon },
-    { path: '/pos', label: 'Bán hàng', icon: POSIcon },
-    { path: '/orders', label: 'Đơn hàng', icon: OrderIcon },
+    { path: '/ban-hang', label: 'Bán hàng', icon: POSIcon },
+    { path: '/don-hang', label: 'Đơn hàng', icon: OrderIcon },
 
     // Group: Sản phẩm
     {
         label: 'Sản phẩm',
         icon: ProductsIcon,
         children: [
-            { path: '/products', label: 'Danh sách sản phẩm', icon: ListIcon },
-            { path: '/purchase-orders', label: 'Nhập hàng', icon: PurchaseIcon },
-            { path: '/inventory', label: 'Tồn kho', icon: InventoryIcon },
+            { path: '/san-pham', label: 'Danh sách sản phẩm', icon: ListIcon },
         ]
     },
 
-    { path: '/suppliers', label: 'Nhà cung cấp', icon: SupplierIcon },
+    // Group: Kho hàng
+    {
+        label: 'Kho hàng',
+        icon: InventoryIcon,
+        children: [
+            { path: '/ton-kho', label: 'Tồn kho', icon: InventoryIcon },
+            { path: '/de-xuat-dat-hang', label: 'Đề xuất đặt hàng', icon: LightbulbIcon },
+            { path: '/dat-hang-ncc', label: 'Đặt hàng NCC', icon: PurchaseIcon },
+            { path: '/nhap-hang', label: 'Nhập hàng', icon: ClipboardIcon },
+            { path: '/inventory/audits', label: 'Kiểm kho', icon: StockTakeIcon },
+        ]
+    },
+
+    { path: '/nha-cung-cap', label: 'Nhà cung cấp', icon: SupplierIcon },
 
     // Group: Khách hàng
     {
         label: 'Khách hàng',
         icon: CustomersIcon,
         children: [
-            { path: '/customers', label: 'Khách hàng', icon: ListIcon },
-            { path: '/loyalty', label: 'Loyalty', icon: LoyaltyIcon },
-            { path: '/debt', label: 'Công nợ', icon: DebtIcon },
+            { path: '/khach-hang', label: 'Khách hàng', icon: ListIcon },
+            { path: '/tich-diem', label: 'Loyalty', icon: LoyaltyIcon },
+            { path: '/cong-no', label: 'Công nợ', icon: DebtIcon },
         ]
     },
 
-    { path: '/employees', label: 'Nhân viên', icon: UsersIcon },
-    { path: '/branches', label: 'Chi nhánh', icon: BranchIcon },
-    { path: '/barcode-print', label: 'In mã vạch', icon: BarcodeIcon },
-    { path: '/shift', label: 'Ca làm việc', icon: ClockIcon },
-    // { path: '/reconciliation', label: 'Kết ca', icon: CashIcon }, // Removed as per user request
-    { path: '/reports', label: 'Báo cáo', icon: ReportsIcon },
-    { path: '/security', label: 'Bảo mật', icon: ShieldIcon },
-    { path: '/reminders', label: 'Nhắc nhở', icon: BellIcon },
-    { path: '/settings', label: 'Cài đặt', icon: SettingsIcon },
+    { path: '/nhan-vien', label: 'Nhân viên', icon: UsersIcon },
+    { path: '/chi-nhanh', label: 'Chi nhánh', icon: BranchIcon },
+    { path: '/in-ma-vach', label: 'In mã vạch', icon: BarcodeIcon },
+    { path: '/ca-lam-viec', label: 'Ca làm việc', icon: ClockIcon },
+    { path: '/bao-cao', label: 'Báo cáo', icon: ReportsIcon },
+    { path: '/bao-mat', label: 'Bảo mật', icon: ShieldIcon },
+    { path: '/nhac-nho', label: 'Nhắc nhở', icon: BellIcon },
+    { path: '/cai-dat', label: 'Cài đặt', icon: SettingsIcon },
+    { path: '/thanh-toan', label: 'Gói & Thanh toán', icon: SparklesIcon },
 ];
 
 function ListIcon({ className }: { className?: string }) {
@@ -90,6 +104,8 @@ export function MainLayout() {
     const { users, hasPermission } = useUserStore();
     const { isMobile, isTablet, isDesktop } = useBreakpoint();
 
+    useBrandTheme(); // Apply brand colors
+
     // Tablet sidebar collapsed state
     const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
     // Mobile "More" menu open state
@@ -97,7 +113,8 @@ export function MainLayout() {
 
     // Group expansion state
     const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({
-        'Sản phẩm': true,
+        'Sản phẩm': false,
+        'Kho hàng': true,
         'Khách hàng': false
     });
 
@@ -108,21 +125,22 @@ export function MainLayout() {
     // Filter Navigation based on permissions
     const filterItem = (item: NavItem, fullUser: any): boolean => {
         // Global inactive check logic (simplified from previous)
-        if (fullUser && fullUser.is_active === false && item.path !== '/employees' && !item.children) return false;
+        if (fullUser && fullUser.is_active === false && item.path !== '/nhan-vien' && !item.children) return false;
 
         // Admin/Owner bypass
-        if (fullUser?.role === 'admin' || fullUser?.role === 'owner') return true;
+        // if (fullUser?.role === 'admin' || fullUser?.role === 'owner') return true;
 
         // Specific checks
-        if (item.path === '/employees') return false; // Hide from staff usually
-        if (item.path === '/reports' && !hasPermission(fullUser, 'report_sales')) return false;
-        if (item.path === '/settings' && !hasPermission(fullUser, 'settings_general')) return false;
-        if (item.path === '/products' && !hasPermission(fullUser, 'product_view')) return false;
-        if (item.path === '/stock-take' && !hasPermission(fullUser, 'inventory_view')) return false;
-        if (item.path === '/purchase-orders' && !hasPermission(fullUser, 'inventory_import')) return false;
-        if (item.path === '/suppliers' && !hasPermission(fullUser, 'inventory_import')) return false; // Use existing permission
-        if (item.path === '/customers' && !hasPermission(fullUser, 'customer_view')) return false;
-        if (item.path === '/security') return false;
+        if (item.path === '/nhan-vien' && !hasPermission(fullUser, 'employee_view')) return false;
+        if (item.path === '/bao-cao' && !hasPermission(fullUser, 'report_sales')) return false;
+        if (item.path === '/cai-dat' && !hasPermission(fullUser, 'settings_general')) return false;
+        if (item.path === '/san-pham' && !hasPermission(fullUser, 'product_view')) return false;
+        if (item.path === '/kiem-kho' && !hasPermission(fullUser, 'inventory_view')) return false;
+        if (item.path === '/nhap-hang' && !hasPermission(fullUser, 'inventory_import')) return false;
+        if (item.path === '/dat-hang-ncc' && !hasPermission(fullUser, 'inventory_import')) return false;
+        if (item.path === '/nha-cung-cap' && !hasPermission(fullUser, 'inventory_import')) return false; // Use existing permission
+        if (item.path === '/khach-hang' && !hasPermission(fullUser, 'customer_view')) return false;
+        // if (item.path === '/bao-mat') return false; // Enabled
 
         return true;
     };
@@ -163,7 +181,7 @@ export function MainLayout() {
                             </div>
                             {(!sidebarCollapsed || !isTablet) && (
                                 <div>
-                                    <h1 className="font-bold text-gray-900">Grocery POS</h1>
+                                    <h1 className="font-bold text-gray-900">Bango Pos</h1>
                                     <p className="text-xs text-gray-500">Quản lý cửa hàng</p>
                                 </div>
                             )}
@@ -279,8 +297,10 @@ export function MainLayout() {
                         })}
                     </nav>
 
+
                     {/* User section - Sticky Bottom */}
                     <div className="p-3 border-t border-gray-200 bg-white shrink-0 mt-auto">
+                        <BranchSwitcher collapsed={sidebarCollapsed && isTablet} />
                         <UserSection
                             collapsed={sidebarCollapsed && isTablet}
                             currentUser={currentUser}
@@ -524,6 +544,38 @@ function InventoryIcon({ className }: { className?: string }) {
     );
 }
 
+function ClipboardIcon({ className }: { className?: string }) {
+    return (
+        <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect width="8" height="4" x="8" y="2" rx="1" ry="1" />
+            <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+            <path d="M12 11h4M12 16h4M8 11h.01M8 16h.01" />
+        </svg>
+    );
+}
+
+function StockTakeIcon({ className }: { className?: string }) {
+    return (
+        <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M9 5H2v7l6.29 6.29c.94.94 2.48.94 3.42 0l3.58-3.58c.94-.94.94-2.48 0-3.42L9 5Z" />
+            <path d="M6 9.01V9" />
+            <path d="m15 5 6 6" />
+            <path d="m21 5-6 6" />
+        </svg>
+    );
+}
+
+function LightbulbIcon({ className }: { className?: string }) {
+    return (
+        <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5" />
+            <path d="M9 18h6" />
+            <path d="M10 22h4" />
+        </svg>
+    );
+}
+
+
 function BarcodeIcon({ className }: { className?: string }) {
     return (
         <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -606,6 +658,8 @@ function UserSection({ collapsed, currentUser }: { collapsed: boolean; currentUs
                         <p className="text-xs text-gray-500">{displayRole}</p>
                     </div>
                 )}
+                {/* Notification Bell */}
+                <NotificationBell />
             </div>
 
             {/* Logout Button - Direct, no dropdown */}
@@ -613,7 +667,7 @@ function UserSection({ collapsed, currentUser }: { collapsed: boolean; currentUs
                 type="button"
                 onClick={() => {
                     console.log('Sidebar logout clicked - redirecting...');
-                    window.location.href = '/login';
+                    window.location.href = '/dang-nhap';
                 }}
                 onMouseDown={(e) => e.stopPropagation()}
                 className={cn(
@@ -637,6 +691,14 @@ function LogoutIcon({ className }: { className?: string }) {
 }
 
 // ... existing icons ...
+
+function SparklesIcon({ className }: { className?: string }) {
+    return (
+        <svg className={className} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456ZM16.894 20.567 16.5 21.75l-.394-1.183a2.25 2.25 0 0 0-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 0 0 1.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 0 0 1.423 1.423l1.183.394-1.183.394a2.25 2.25 0 0 0-1.423 1.423Z" />
+        </svg>
+    );
+}
 
 
 

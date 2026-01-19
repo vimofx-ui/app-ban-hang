@@ -22,6 +22,7 @@ export function CustomersPage() {
     const [filter, setFilter] = useState<'all' | 'debt'>('all');
     const [currentPage, setCurrentPage] = useState(1);
     const [pageSize, setPageSize] = useState(20);
+    const fileInputRef = useRef<HTMLInputElement>(null);
 
     useEffect(() => {
         loadCustomers();
@@ -42,8 +43,8 @@ export function CustomersPage() {
         currentPage * pageSize
     );
 
-    const totalDebt = customers.reduce((sum, c) => sum + c.debt_balance, 0);
-    const debtCount = customers.filter((c) => c.debt_balance > 0).length;
+    const totalDebt = customers.reduce((sum, c) => sum + (c.debt_balance || 0), 0);
+    const debtCount = customers.filter((c) => (c.debt_balance || 0) > 0).length;
 
     const handleEdit = (customer: Customer) => {
         setEditingCustomer(customer);
@@ -99,8 +100,6 @@ export function CustomersPage() {
             </>
         );
     }
-
-    const fileInputRef = useRef<HTMLInputElement>(null);
 
     const handleExport = () => {
         const columns = [
@@ -201,11 +200,54 @@ export function CustomersPage() {
                     <div className="text-center py-12 text-gray-500">Đang tải...</div>
                 ) : (
                     <div className="bg-white rounded-xl shadow-sm overflow-hidden">
-                        <table className="w-full">
+                        {/* Mobile Cards */}
+                        <div className="md:hidden divide-y divide-gray-100">
+                            {paginatedCustomers.map((customer) => (
+                                <div
+                                    key={customer.id}
+                                    onClick={() => setViewingCustomerId(customer.id)}
+                                    className="p-4 hover:bg-gray-50 cursor-pointer"
+                                >
+                                    <div className="flex items-center justify-between mb-2">
+                                        <div>
+                                            <p className="font-medium text-blue-600">{customer.name}</p>
+                                            <p className="text-xs text-gray-400">{customer.code} • {customer.total_orders || 0} đơn</p>
+                                        </div>
+                                        <div className="text-right">
+                                            {customer.debt_balance > 0 ? (
+                                                <span className="text-red-600 font-medium text-sm">{formatVND(customer.debt_balance)}</span>
+                                            ) : (
+                                                <span className="text-primary font-medium text-sm">{customer.points_balance || 0} điểm</span>
+                                            )}
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center justify-between text-sm text-gray-500">
+                                        <span>{customer.phone || 'Chưa có SĐT'}</span>
+                                        <div className="flex gap-2">
+                                            <button
+                                                onClick={(e) => { e.stopPropagation(); handleEdit(customer); }}
+                                                className="p-1.5 text-gray-400 hover:text-primary"
+                                            >
+                                                <EditIcon className="w-4 h-4" />
+                                            </button>
+                                            <button
+                                                onClick={(e) => { e.stopPropagation(); handleDelete(customer); }}
+                                                className="p-1.5 text-gray-400 hover:text-red-500"
+                                            >
+                                                <TrashIcon className="w-4 h-4" />
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+
+                        {/* Desktop Table */}
+                        <table className="hidden md:table w-full">
                             <thead className="bg-white border-b border-gray-100">
                                 <tr>
                                     <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Khách hàng</th>
-                                    <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider hidden md:table-cell">Liên hệ</th>
+                                    <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Liên hệ</th>
                                     <th className="px-6 py-4 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Điểm</th>
                                     <th className="px-6 py-4 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Công nợ</th>
                                     <th className="px-6 py-4 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Thao tác</th>
@@ -253,14 +295,14 @@ function CustomerRow({ customer, onView, onEdit, onDelete }: { customer: Custome
         <tr onClick={onView} className="hover:bg-gray-50/80 cursor-pointer transition-colors border-b border-gray-50 last:border-0">
             <td className="px-6 py-4">
                 <div className="font-medium text-gray-900 text-blue-600 hover:underline">{customer.name}</div>
-                <div className="text-xs text-gray-400">{customer.code} • {customer.total_orders} đơn</div>
+                <div className="text-xs text-gray-400">{customer.code} • {customer.total_orders || 0} đơn</div>
             </td>
             <td className="px-6 py-4 hidden md:table-cell">
                 <div className="text-sm text-gray-600">{customer.phone || '-'}</div>
                 <div className="text-xs text-gray-400">{customer.email}</div>
             </td>
             <td className="px-6 py-4 text-right">
-                <span className="text-primary font-medium">{customer.points_balance}</span>
+                <span className="text-primary font-medium">{customer.points_balance || 0}</span>
             </td>
             <td className="px-6 py-4 text-right">
                 {customer.debt_balance > 0 ? (

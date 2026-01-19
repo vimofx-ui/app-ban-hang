@@ -8,7 +8,7 @@ import { useAuthStore } from '@/stores/authStore';
 
 export function LoginPage() {
     const navigate = useNavigate();
-    const { login, loading, error, clearError } = useAuthStore();
+    const { login, isLoading, error, clearError } = useAuthStore();
 
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
@@ -54,7 +54,7 @@ export function LoginPage() {
                             <polyline points="9 22 9 12 15 12 15 22" />
                         </svg>
                     </div>
-                    <h1 style={{ fontSize: '24px', fontWeight: 'bold', color: '#111827', margin: 0 }}>Grocery POS</h1>
+                    <h1 style={{ fontSize: '24px', fontWeight: 'bold', color: '#111827', margin: 0 }}>Bango Pos</h1>
                     <p style={{ color: '#6B7280', marginTop: '4px' }}>Đăng nhập để tiếp tục</p>
                 </div>
 
@@ -164,21 +164,21 @@ export function LoginPage() {
                         {/* Submit Button */}
                         <button
                             type="submit"
-                            disabled={loading}
+                            disabled={isLoading}
                             style={{
                                 width: '100%',
                                 padding: '12px',
                                 borderRadius: '12px',
                                 fontWeight: '600',
                                 color: 'white',
-                                background: loading ? '#9ca3af' : 'linear-gradient(to right, #22c55e, #16a34a)',
+                                background: isLoading ? '#9ca3af' : 'linear-gradient(to right, #22c55e, #16a34a)',
                                 border: 'none',
-                                cursor: loading ? 'not-allowed' : 'pointer',
+                                cursor: isLoading ? 'not-allowed' : 'pointer',
                                 fontSize: '16px',
-                                boxShadow: loading ? 'none' : '0 10px 15px -3px rgba(34,197,94,0.3)'
+                                boxShadow: isLoading ? 'none' : '0 10px 15px -3px rgba(34,197,94,0.3)'
                             }}
                         >
-                            {loading ? 'Đang đăng nhập...' : 'Đăng nhập'}
+                            {isLoading ? 'Đang đăng nhập...' : 'Đăng nhập'}
                         </button>
                     </form>
 

@@ -34,6 +34,7 @@ export interface UserProfile extends BaseEntity {
     hourly_rate?: number;
     permissions?: string[]; // Optional override or cache
     is_active: boolean;
+    assigned_branch_id?: string | null;
 }
 
 // ============= Product Types =============
@@ -65,7 +66,7 @@ export interface Product extends BaseEntity {
     base_unit: string;
     purchase_price?: number; // Giá nhập - dùng cho đơn nhập hàng
     cost_price: number; // Giá vốn = avg từ giá nhập (tính tự động)
-    avg_cost_price?: number; // Weighted average cost price
+    avg_cost?: number; // WAC - Weighted Average Cost từ inventory_costs
     total_cost_value?: number; // Total inventory value = avg_cost * current_stock
     selling_price: number;
     wholesale_price?: number;
@@ -89,6 +90,10 @@ export interface Product extends BaseEntity {
     exclude_from_loyalty_points?: boolean; // If true, this product does not earn points
     attributes?: ProductAttribute[]; // Product attributes (e.g., color, size)
     variants?: ProductVariant[]; // Product variants (e.g., Lốc 6, Thùng 24)
+
+    // Multi-Branch Pricing
+    base_price?: number; // Original price before branch override
+    has_price_override?: boolean; // Flag to indicate if price is overridden
 }
 
 // Product attribute for variants
@@ -134,6 +139,7 @@ export interface Customer extends BaseEntity {
     email?: string;
     address?: string;
     gender?: Gender;
+    date_of_birth?: string;  // Ngày sinh
     points_balance: number;
     total_spent: number;
     total_orders: number;
@@ -141,6 +147,7 @@ export interface Customer extends BaseEntity {
     notes?: string;
     is_active: boolean;
     last_purchase_at?: string; // Track last purchase time
+    points?: number; // Alias for points_balance for UI compatibility
 }
 
 // ============= Order Types =============
@@ -181,6 +188,8 @@ export interface DeliveryInfo {
 
 export interface Order extends BaseEntity {
     order_number: string;
+    brand_id?: UUID;
+    branch_id?: UUID;
     shift_id?: UUID;
     customer_id?: UUID;
     status: OrderStatus;
@@ -421,6 +430,13 @@ export interface PurchaseOrder extends BaseEntity {
     points_discount?: number;
     tax_amount: number;
     total_amount: number;
+
+    // Cost Allocation Fields (Phase C)
+    shipping_cost?: number;      // Phí vận chuyển
+    import_tax?: number;         // Thuế nhập khẩu
+    other_costs?: number;        // Chi phí khác
+    supplier_discount?: number;  // Chiết khấu từ NCC (giảm tổng đơn)
+
     notes?: string;
     tags?: string[];
     invoice_images?: string[]; // Array of image URLs or base64 data
@@ -439,6 +455,10 @@ export interface PurchaseOrderItem extends BaseEntity {
     returned_quantity?: number;
     unit_price: number;
     total_price: number;
+
+    // Cost Allocation Fields
+    allocated_cost?: number;     // Chi phí phân bổ cho mục này (tổng)
+    final_unit_cost?: number;    // Giá vốn cuối cùng đơn vị (sau khi cộng chi phí phân bổ)
 }
 
 // ============= Search Types =============
@@ -478,7 +498,7 @@ export interface PaymentMethodConfig {
     icon: string; // Emoji or URL to uploaded icon
     iconType: 'emoji' | 'url';
     enabled: boolean; // Show in POS
-    order: number; // Display order
+    sortOrder: number; // Display order
     isSystem: boolean; // Cannot delete system methods (cash, transfer, card, debt)
 }
 

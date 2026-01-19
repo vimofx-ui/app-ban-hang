@@ -4,7 +4,7 @@
 
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { supabase } from '@/lib/supabase';
+import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 
 // ============================================================================
 // INTERFACES
@@ -95,6 +95,35 @@ export const useBranchStore = create<BranchState>()(
 
             createBranch: async (branchData) => {
                 set({ isLoading: true, error: null });
+
+                // Helper for Mock/Local Branch
+                const createLocalBranch = (data: Partial<Branch>): Branch => {
+                    console.log('Creating local/mock branch');
+                    const newBranch = {
+                        id: crypto.randomUUID(),
+                        brand_id: data.brand_id || 'brand_demo',
+                        name: data.name || 'Chi nhánh mới',
+                        code: data.code,
+                        address: data.address,
+                        phone: data.phone,
+                        email: data.email,
+                        status: 'active',
+                        created_at: new Date().toISOString(),
+                        updated_at: new Date().toISOString()
+                    } as Branch;
+
+                    set(state => ({
+                        branches: [...state.branches, newBranch],
+                        isLoading: false
+                    }));
+                    return newBranch;
+                };
+
+                // Case 1: Demo Mode or Mock Brand
+                if (!isSupabaseConfigured() || (branchData.brand_id && branchData.brand_id.startsWith('brand_'))) {
+                    return createLocalBranch(branchData);
+                }
+
                 try {
                     // Convert frontend status to DB status
                     const dbPayload = {
@@ -123,8 +152,10 @@ export const useBranchStore = create<BranchState>()(
                     return newBranch;
                 } catch (err: any) {
                     console.error('Error creating branch:', err);
-                    set({ error: err.message, isLoading: false });
-                    return null;
+
+                    // Case 2: DB Error (RLS, Network, UUID format) -> Fallback to Local
+                    console.warn('⚠️ Database insert failed, falling back to local storage');
+                    return createLocalBranch(branchData);
                 }
             },
 

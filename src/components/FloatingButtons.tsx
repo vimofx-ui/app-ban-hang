@@ -23,11 +23,11 @@ export function FloatingButtons() {
         console.log('handleLogout called');
         // Không dùng confirm vì bị đóng ngay
         // Redirect trực tiếp
-        window.location.href = '/login';
+        window.location.href = '/dang-nhap';
     };
 
     return (
-        <div 
+        <div
             style={{
                 position: 'fixed',
                 top: '70px',
@@ -40,10 +40,10 @@ export function FloatingButtons() {
         >
             <button
                 type="button"
-                style={{ 
-                    background: isFullscreen ? '#f59e0b' : '#16a34a', 
-                    color: 'white', 
-                    padding: '10px 14px', 
+                style={{
+                    background: isFullscreen ? '#f59e0b' : '#16a34a',
+                    color: 'white',
+                    padding: '10px 14px',
                     fontWeight: '600',
                     fontSize: '12px',
                     border: 'none',
@@ -61,10 +61,10 @@ export function FloatingButtons() {
             </button>
             <button
                 type="button"
-                style={{ 
-                    background: '#dc2626', 
-                    color: 'white', 
-                    padding: '10px 14px', 
+                style={{
+                    background: '#dc2626',
+                    color: 'white',
+                    padding: '10px 14px',
                     fontWeight: '600',
                     fontSize: '12px',
                     border: 'none',

@@ -2,10 +2,12 @@ import { create } from 'zustand';
 import { supabase } from '@/lib/supabase'; // Assuming strict path or index export
 import type { Order, OrderItem } from '@/types';
 
-interface OrderState {
+import { createBaseState, withAsync } from './baseStore';
+import type { BaseState } from './baseStore';
+import { logAction } from '@/lib/audit';
+
+interface OrderState extends BaseState {
     orders: Order[];
-    isLoading: boolean;
-    error: string | null;
 
     loadOrders: () => Promise<void>;
     addOrder: (order: Order) => void;
@@ -16,19 +18,32 @@ interface OrderState {
     processReturn: (originalOrder: Order, itemsToReturn: { itemId: string; quantity: number }[], reason: string) => Promise<boolean>;
 }
 
+// Helper: Remove images to save space
+const cleanOrderForStorage = (order: Order): Order => ({
+    ...order,
+    order_items: order.order_items?.map(item => ({
+        ...item,
+        product: item.product ? {
+            ...item.product,
+            image_url: undefined,
+            images: undefined
+        } : item.product
+    }))
+});
+
 export const useOrderStore = create<OrderState>((set, get) => ({
+    ...createBaseState(),
     orders: [],
-    isLoading: false,
-    error: null,
 
     loadOrders: async () => {
-        set({ isLoading: true });
-        try {
+        await withAsync(set, async () => {
             let data: any[] = [];
             let error = null;
 
             if (supabase) {
-                const res = await supabase
+                const { branchId } = await import('./authStore').then(m => m.useAuthStore.getState());
+
+                let query = supabase
                     .from('orders')
                     .select(`
                         *,
@@ -36,6 +51,13 @@ export const useOrderStore = create<OrderState>((set, get) => ({
                         customer:customers(*)
                     `)
                     .order('created_at', { ascending: false });
+
+                if (branchId) {
+                    query = query.eq('branch_id', branchId);
+                }
+
+                const res = await query;
+
                 data = res.data || [];
                 error = res.error;
             }
@@ -43,28 +65,21 @@ export const useOrderStore = create<OrderState>((set, get) => ({
             if (!error) {
                 // Merge with offline orders if any
                 const offlineOrders = JSON.parse(localStorage.getItem('offline-orders') || '[]');
-                // Combine: Offline orders (usually newer) + DB orders
-                // Note: In real app, you might want to sync offline -> DB here
-                const allOrders = [...offlineOrders, ...data].sort((a, b) =>
+
+                // Create Set of IDs from Supabase data for efficient lookup
+                const existingIds = new Set(data.map((o: any) => o.id));
+
+                // Only include offline orders that are NOT in Supabase data
+                const uniqueOfflineOrders = offlineOrders.filter((o: any) => !existingIds.has(o.id));
+
+                const allOrders = [...uniqueOfflineOrders, ...data].sort((a, b) =>
                     new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
                 );
-
                 set({ orders: allOrders as Order[] });
             } else if (error) {
                 throw error;
             }
-        } catch (err: any) {
-            console.error('Error loading orders:', err);
-            // Even if error, show offline
-            const offlineOrders = JSON.parse(localStorage.getItem('offline-orders') || '[]');
-            if (offlineOrders.length > 0) {
-                set({ orders: offlineOrders, error: null });
-            } else {
-                set({ error: err.message });
-            }
-        } finally {
-            set({ isLoading: false });
-        }
+        }, 'Không thể tải danh sách đơn hàng');
     },
 
     // Add order to state and localStorage (for POS integration)
@@ -76,7 +91,7 @@ export const useOrderStore = create<OrderState>((set, get) => ({
             const offlineOrders = JSON.parse(localStorage.getItem('offline-orders') || '[]');
             // Avoid duplicates
             if (!offlineOrders.find((o: Order) => o.id === order.id)) {
-                offlineOrders.unshift(order);
+                offlineOrders.unshift(cleanOrderForStorage(order));
                 localStorage.setItem('offline-orders', JSON.stringify(offlineOrders.slice(0, 100))); // Keep max 100
             }
 
@@ -143,6 +158,9 @@ export const useOrderStore = create<OrderState>((set, get) => ({
 
             console.log('[updateOrder] Enriched updates:', enrichedUpdates);
 
+            // Log action import moved to top level
+
+            // ... (inside updateOrder)
             // 1. Update Supabase
             if (supabase) {
                 console.log('[updateOrder] Updating Supabase...');
@@ -155,6 +173,14 @@ export const useOrderStore = create<OrderState>((set, get) => ({
                     throw error;
                 }
                 console.log('[updateOrder] Supabase update successful');
+
+                // LOG ACTION (Only for important status changes)
+                if (updates.status) {
+                    await logAction('update_order_status', 'orders', id, {
+                        old_status: get().orders.find(o => o.id === id)?.status,
+                        new_status: updates.status
+                    });
+                }
             }
 
             // 2. Update Local State & Offline Storage
@@ -166,7 +192,7 @@ export const useOrderStore = create<OrderState>((set, get) => ({
                 const offlineOrders = JSON.parse(localStorage.getItem('offline-orders') || '[]');
                 const idx = offlineOrders.findIndex((o: Order) => o.id === id);
                 if (idx !== -1) {
-                    offlineOrders[idx] = { ...offlineOrders[idx], ...enrichedUpdates };
+                    offlineOrders[idx] = cleanOrderForStorage({ ...offlineOrders[idx], ...enrichedUpdates });
                     localStorage.setItem('offline-orders', JSON.stringify(offlineOrders));
                 }
 
@@ -389,7 +415,7 @@ export const useOrderStore = create<OrderState>((set, get) => ({
 
                 // Save return order to localStorage
                 const offlineOrders = JSON.parse(localStorage.getItem('offline-orders') || '[]');
-                offlineOrders.unshift(returnOrder);
+                offlineOrders.unshift(cleanOrderForStorage(returnOrder as Order));
                 localStorage.setItem('offline-orders', JSON.stringify(offlineOrders.slice(0, 100)));
             }
 
@@ -439,3 +465,27 @@ export const useOrderStore = create<OrderState>((set, get) => ({
         }
     }
 }));
+
+export function subscribeOrders(onChange: () => void) {
+    if (!supabase) return;
+
+    const channel = supabase
+        .channel('orders-realtime')
+        .on(
+            'postgres_changes',
+            {
+                event: '*',
+                schema: 'public',
+                table: 'orders',
+            },
+            () => {
+                console.log('🔔 Realtime order update received');
+                onChange();
+            }
+        )
+        .subscribe();
+
+    return () => {
+        supabase.removeChannel(channel);
+    };
+}

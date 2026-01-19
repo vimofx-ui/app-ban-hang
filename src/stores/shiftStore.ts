@@ -8,8 +8,11 @@ import type { Shift, CashDetails, ReconciliationStatus } from '@/types';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { generateId } from '@/lib/utils';
 import { createEmptyCashDetails, calculateReconciliation } from '@/lib/cashReconciliation';
+import { createBaseState, withAsync } from './baseStore';
+import type { BaseState } from './baseStore';
+import { logAction } from '@/lib/audit';
 
-export interface ShiftState {
+export interface ShiftState extends BaseState {
     // Current shift
     currentShift: Shift | null;
     isClockingIn: boolean;
@@ -19,11 +22,11 @@ export interface ShiftState {
     currentUser: {
         id: string;
         name: string;
-        role: 'admin' | 'staff';
+        role: string;
     } | null;
 
     // Actions
-    clockIn: (userId: string, userName: string, role: 'admin' | 'staff', openingCash: number, openingCashDetails?: CashDetails, openingBankBalance?: number, customTime?: string, startNote?: string, handoverPerson?: string) => Promise<void>;
+    clockIn: (userId: string, userName: string, role: string, openingCash: number, openingCashDetails?: CashDetails, openingBankBalance?: number, customTime?: string, startNote?: string, handoverPerson?: string) => Promise<void>;
     clockOut: (closingCash: number, closingCashDetails?: CashDetails, closingBankBalance?: number, notes?: string, customEndTime?: string, finalTotalExpenses?: number) => Promise<void>;
     updateShiftTotals: (updates: Partial<Pick<Shift, 'total_cash_sales' | 'total_card_sales' | 'total_transfer_sales' | 'total_debt_sales' | 'total_expenses' | 'total_returns' | 'total_point_sales'>>) => void;
     addExpense: (amount: number, category: string, note: string) => Promise<void>;
@@ -50,19 +53,22 @@ export interface ShiftState {
 export const useShiftStore = create<ShiftState>()(
     persist(
         (set, get) => ({
+            ...createBaseState(),
             currentShift: null,
             isClockingIn: false,
             isClockingOut: false,
             currentUser: null,
             history: [],
             endShiftDraft: null,
+            isLoading: false,
+            error: null,
 
             saveEndShiftDraft: (data) => set({ endShiftDraft: data }),
             clearEndShiftDraft: () => set({ endShiftDraft: null }),
 
 
             // Clock in - start a new shift
-            clockIn: async (userId: string, userName: string, role: 'admin' | 'staff', openingCash: number, openingCashDetails?: CashDetails, openingBankBalance: number = 0, customTime?: string, startNote?: string, handoverPerson?: string) => {
+            clockIn: async (userId: string, userName: string, role: string, openingCash: number, openingCashDetails?: CashDetails, openingBankBalance: number = 0, customTime?: string, startNote?: string, handoverPerson?: string) => {
                 set({ isClockingIn: true });
 
                 const newShift: Shift = {
@@ -272,7 +278,7 @@ export const useShiftStore = create<ShiftState>()(
             },
 
             // Set demo user (for testing without auth)
-            setDemoUser: (name: string, role: 'admin' | 'staff') => {
+            setDemoUser: (name: string, role: string) => {
                 set({
                     currentUser: {
                         id: generateId(),

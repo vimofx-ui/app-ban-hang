@@ -91,8 +91,8 @@ export function OrderDetailsModal({ order: initialOrder, onClose, onReturn, onPa
     const canCancel = order.is_delivery &&
         ['pending_approval', 'approved', 'packing', 'packed'].includes(order.status);
 
-    // Check if order can be returned (after shipping, before completed)
-    const canReturn = order.is_delivery && order.status === 'shipping';
+    // Check if order can be returned (shipping or completed orders, both delivery and POS)
+    const canReturn = ['shipping', 'completed'].includes(order.status) && order.status !== 'cancelled';
 
     const handlePrint = async () => {
         await printSalesReceipt(order, 'Admin');
@@ -409,9 +409,9 @@ export function OrderDetailsModal({ order: initialOrder, onClose, onReturn, onPa
 
     return (
         <>
-            <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-                {/* Modal Container - 20% wider (1200px instead of 1000px) */}
-                <div className="bg-gray-100 rounded-2xl shadow-2xl w-[95vw] md:w-[1200px] max-h-[92vh] overflow-hidden flex flex-col border border-gray-200">
+            <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center md:p-4">
+                {/* Modal Container - Full screen on mobile, centered on desktop */}
+                <div className="bg-gray-100 shadow-2xl w-full h-[100dvh] md:w-[1200px] md:h-auto md:max-h-[92vh] md:rounded-2xl overflow-hidden flex flex-col border-0 md:border border-gray-200">
 
                     {/* Header - Green Theme - Redesigned Layout */}
                     <div className="bg-[#00AC47] px-6 py-4 text-white relative">
@@ -421,13 +421,13 @@ export function OrderDetailsModal({ order: initialOrder, onClose, onReturn, onPa
                         </button>
 
                         {/* Row 1: Title + Status + Actions */}
-                        <div className="flex items-center justify-between gap-4 mb-4 pr-12">
+                        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 mb-4 pr-12">
                             {/* Left: Order Info */}
-                            <div className="flex items-center gap-3">
-                                <div className="p-2 bg-white/20 rounded-lg backdrop-blur-sm">
+                            <div className="flex items-center gap-3 w-full md:w-auto">
+                                <div className="p-2 bg-white/20 rounded-lg backdrop-blur-sm shrink-0">
                                     <FileText size={22} className="text-white" />
                                 </div>
-                                <div>
+                                <div className="min-w-0 flex-1">
                                     <h2 className="text-xl font-bold flex items-center gap-3">
                                         Đơn hàng #{order.order_number}
                                         <span className="text-xs font-medium bg-white text-[#00AC47] px-2.5 py-1 rounded-full">
@@ -737,7 +737,66 @@ export function OrderDetailsModal({ order: initialOrder, onClose, onReturn, onPa
                                         </div>
                                     )}
                                 </div>
-                                <table className="w-full text-sm">
+                                {/* Mobile Items List (Card View) */}
+                                <div className="md:hidden divide-y divide-gray-100 p-4">
+                                    {(editedOrder.order_items || []).map((item, idx) => (
+                                        <div key={item.id} className="py-3 first:pt-0 last:pb-0">
+                                            <div className="flex gap-3">
+                                                <div className="relative w-16 h-16 border border-gray-200 rounded-lg bg-gray-50 flex items-center justify-center overflow-hidden shrink-0 group">
+                                                    {item.product?.image_url ? (
+                                                        <img src={item.product.image_url} alt="" className="w-full h-full object-cover" />
+                                                    ) : (
+                                                        <span className="text-xl">📦</span>
+                                                    )}
+                                                    {isEditing && (
+                                                        <button
+                                                            onClick={() => removeItem(item.id)}
+                                                            className="absolute top-0 right-0 p-1 bg-red-500/80 text-white rounded-bl-lg"
+                                                        >
+                                                            <X size={12} />
+                                                        </button>
+                                                    )}
+                                                </div>
+                                                <div className="flex-1 min-w-0">
+                                                    <div className="font-medium text-gray-800 text-sm line-clamp-2">{item.product?.name || 'Sản phẩm'}</div>
+                                                    <div className="text-xs text-gray-500 mt-0.5">{item.product?.sku}</div>
+
+                                                    <div className="flex items-center justify-between mt-2">
+                                                        <div className="font-bold text-green-600 text-sm">{formatVND(item.unit_price)}</div>
+                                                        {isEditing ? (
+                                                            <div className="flex items-center gap-2">
+                                                                <button
+                                                                    className="w-6 h-6 bg-gray-100 rounded text-gray-600 hover:bg-gray-200 flex items-center justify-center"
+                                                                    onClick={() => updateItemQuantity(item.id, item.quantity - 1)}
+                                                                >-</button>
+                                                                <span className="font-semibold text-gray-800 w-4 text-center text-sm">{item.quantity}</span>
+                                                                <button
+                                                                    className="w-6 h-6 bg-gray-100 rounded text-gray-600 hover:bg-gray-200 flex items-center justify-center"
+                                                                    onClick={() => updateItemQuantity(item.id, item.quantity + 1)}
+                                                                >+</button>
+                                                            </div>
+                                                        ) : (
+                                                            <div className="text-sm font-medium">x{item.quantity}</div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            {isEditing ? (
+                                                <input
+                                                    value={item.notes || ''}
+                                                    onChange={(e) => { }}
+                                                    placeholder="Ghi chú..."
+                                                    className="text-xs p-1.5 border rounded-lg w-full mt-2 bg-gray-50"
+                                                />
+                                            ) : (
+                                                item.notes && <div className="text-xs text-orange-500 mt-2 bg-orange-50 p-1.5 rounded">📝 {item.notes}</div>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+
+                                {/* Desktop Table */}
+                                <table className="hidden md:table w-full text-sm">
                                     <thead className="bg-gray-50/50 border-b border-gray-100">
                                         <tr>
                                             <th className="px-4 py-4 text-left font-medium text-gray-500 text-xs uppercase tracking-wider">STT</th>

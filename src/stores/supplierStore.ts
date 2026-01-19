@@ -1,185 +1,348 @@
 // =============================================================================
-// SUPPLIER STORE - Supplier Management State
+// SUPPLIER STORE - Manage suppliers and supplier products
 // =============================================================================
 
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
-import type { Supplier } from '@/types';
-import { generateId } from '@/lib/utils';
-import { useBrandStore } from '@/stores/brandStore';
+import { useBrandStore } from './brandStore';
+import { useAuthStore } from './authStore';
 
-// Mock suppliers for demo
-const MOCK_SUPPLIERS: Supplier[] = [
-    {
-        id: 'sup-001',
-        code: 'NCC-001',
-        name: 'Công ty CP Thực phẩm Sài Gòn',
-        contact_person: 'Nguyễn Văn A',
-        phone: '0901234567',
-        email: 'lienhe@saigonfood.vn',
-        address: '123 Nguyễn Văn Linh, Q.7, TP.HCM',
-        tax_id: '0301234567',
-        payment_terms: 30,
-        notes: 'Nhà cung cấp chính',
-        is_active: true,
-        debt_balance: 5000000,
-        created_at: new Date().toISOString(),
-    },
-    {
-        id: 'sup-002',
-        code: 'NCC-002',
-        name: 'Đại lý Nước giải khát Miền Nam',
-        contact_person: 'Trần Thị B',
-        phone: '0912345678',
-        email: 'order@nuocngot.vn',
-        address: '456 Điện Biên Phủ, Q.3, TP.HCM',
-        payment_terms: 15,
-        is_active: true,
-        debt_balance: 0,
-        created_at: new Date().toISOString(),
-    },
-    {
-        id: 'sup-003',
-        code: 'NCC-003',
-        name: 'Kho Bánh Kẹo Bình Dương',
-        contact_person: 'Lê Văn C',
-        phone: '0923456789',
-        address: 'KCN Sóng Thần, Bình Dương',
-        payment_terms: 7,
-        is_active: true,
-        debt_balance: 2500000,
-        created_at: new Date().toISOString(),
-    },
-];
+export interface Supplier {
+    id: string;
+    brand_id: string;
+    name: string;
+    code?: string;
+    phone?: string;
+    email?: string;
+    address?: string;
+    tax_code?: string;
+    tax_id?: string; // Alias for tax_code
+    contact_person?: string;
+    bank_account?: string;
+    bank_name?: string;
+    payment_terms?: string;
+    notes?: string;
+    is_active: boolean;
+    debt_balance: number; // For debt management
+    created_at: string;
+    updated_at: string;
+}
 
-export interface SupplierState {
+export interface SupplierProduct {
+    id: string;
+    supplier_id: string;
+    product_id: string;
+    brand_id: string;
+    supplier_sku?: string;
+    last_import_price: number;
+    min_order_qty: number;
+    lead_time_days: number;
+    last_import_date?: string;
+    is_preferred: boolean;
+    notes?: string;
+    // Joined fields
+    product_name?: string;
+    product_sku?: string;
+    supplier_name?: string;
+}
+
+interface SupplierState {
     suppliers: Supplier[];
+    supplierProducts: SupplierProduct[];
     isLoading: boolean;
     error: string | null;
 
-    loadSuppliers: () => Promise<void>;
-    addSupplier: (supplier: Omit<Supplier, 'id' | 'created_at'>) => Promise<Supplier>;
-    updateSupplier: (id: string, updates: Partial<Supplier>) => Promise<void>;
-    deleteSupplier: (id: string) => Promise<void>;
-    getSupplierById: (id: string) => Supplier | undefined;
+    // Actions
+    fetchSuppliers: () => Promise<void>;
+    loadSuppliers: () => Promise<void>; // Alias for fetchSuppliers
+    fetchSupplierProducts: (supplierId?: string) => Promise<void>;
+    getSupplier: (id: string) => Supplier | undefined;
+    createSupplier: (supplier: Partial<Supplier>) => Promise<Supplier | null>;
+    updateSupplier: (id: string, updates: Partial<Supplier>) => Promise<boolean>;
+    deleteSupplier: (id: string) => Promise<boolean>;
 
     // Debt management
     getSuppliersWithDebt: () => Supplier[];
-    payDebt: (id: string, amount: number) => Promise<void>;
-    addDebt: (id: string, amount: number) => Promise<void>;
+    payDebt: (supplierId: string, amount: number) => Promise<boolean>;
+
+    // Supplier Products
+    addSupplierProduct: (sp: Partial<SupplierProduct>) => Promise<boolean>;
+    updateSupplierProduct: (id: string, updates: Partial<SupplierProduct>) => Promise<boolean>;
+    removeSupplierProduct: (id: string) => Promise<boolean>;
+    getBestSupplierForProduct: (productId: string) => SupplierProduct | null;
+    getProductSuppliers: (productId: string) => SupplierProduct[];
 }
 
-export const useSupplierStore = create<SupplierState>()(
-    persist(
-        (set, get) => ({
-            suppliers: [],
-            isLoading: false,
-            error: null,
+export const useSupplierStore = create<SupplierState>((set, get) => ({
+    suppliers: [],
+    supplierProducts: [],
+    isLoading: false,
+    error: null,
 
-            loadSuppliers: async () => {
-                set({ isLoading: true, error: null });
-
-                if (isSupabaseConfigured() && supabase) {
-                    try {
-                        const { data, error } = await supabase
-                            .from('suppliers')
-                            .select('*')
-                            .eq('is_active', true)
-                            .order('name');
-
-                        if (error) throw error;
-                        set({ suppliers: data as Supplier[], isLoading: false });
-                    } catch (err) {
-                        console.error('Failed to load suppliers:', err);
-                        set({ error: 'Không thể tải nhà cung cấp', isLoading: false, suppliers: MOCK_SUPPLIERS });
-                    }
-                } else {
-                    set({ suppliers: MOCK_SUPPLIERS, isLoading: false });
-                }
-            },
-
-            addSupplier: async (supplierData) => {
-                const currentBrand = useBrandStore.getState().currentBrand;
-                const newSupplier: Supplier = {
-                    ...supplierData,
-                    id: generateId(),
-                    brand_id: currentBrand?.id,
-                    created_at: new Date().toISOString(),
-                };
-
-                if (isSupabaseConfigured() && supabase) {
-                    try {
-                        const { error } = await supabase.from('suppliers').insert(newSupplier);
-                        if (error) throw error;
-                    } catch (err) {
-                        console.error('Failed to add supplier:', err);
-                        throw err;
-                    }
-                }
-
-                set((state) => ({ suppliers: [...state.suppliers, newSupplier] }));
-                return newSupplier;
-            },
-
-            updateSupplier: async (id, updates) => {
-                if (isSupabaseConfigured() && supabase) {
-                    try {
-                        const { error } = await supabase.from('suppliers').update(updates).eq('id', id);
-                        if (error) throw error;
-                    } catch (err) {
-                        console.error('Failed to update supplier:', err);
-                        throw err;
-                    }
-                }
-
-                set((state) => ({
-                    suppliers: state.suppliers.map((s) => (s.id === id ? { ...s, ...updates } : s)),
-                }));
-            },
-
-            deleteSupplier: async (id) => {
-                if (isSupabaseConfigured() && supabase) {
-                    try {
-                        const { error } = await supabase.from('suppliers').update({ is_active: false }).eq('id', id);
-                        if (error) throw error;
-                    } catch (err) {
-                        console.error('Failed to delete supplier:', err);
-                        throw err;
-                    }
-                }
-
-                set((state) => ({ suppliers: state.suppliers.filter((s) => s.id !== id) }));
-            },
-
-            getSupplierById: (id) => get().suppliers.find((s) => s.id === id),
-
-            // Debt management
-            getSuppliersWithDebt: () => {
-                return get().suppliers
-                    .filter((s) => s.debt_balance > 0)
-                    .sort((a, b) => b.debt_balance - a.debt_balance);
-            },
-
-            payDebt: async (id, amount) => {
-                const supplier = get().getSupplierById(id);
-                if (!supplier) return;
-
-                const newDebt = Math.max(0, supplier.debt_balance - amount);
-                await get().updateSupplier(id, { debt_balance: newDebt });
-            },
-
-            addDebt: async (id, amount) => {
-                const supplier = get().getSupplierById(id);
-                if (!supplier) return;
-
-                const newDebt = supplier.debt_balance + amount;
-                await get().updateSupplier(id, { debt_balance: newDebt });
-            },
-        }),
-        {
-            name: 'supplier-store',
-            partialize: (state) => ({ suppliers: state.suppliers }),
+    fetchSuppliers: async () => {
+        if (!isSupabaseConfigured()) {
+            console.log('[SupplierStore] Supabase not configured');
+            return;
         }
-    )
-);
+
+        set({ isLoading: true, error: null });
+        try {
+            const brandId = useBrandStore.getState().currentBrand?.id || useAuthStore.getState().brandId;
+            console.log('[SupplierStore] Fetching suppliers for brandId:', brandId);
+
+            if (!brandId) throw new Error('No brand selected');
+
+            // Query tất cả suppliers của brand (bỏ filter is_active để debug)
+            const { data, error } = await supabase
+                .from('suppliers')
+                .select('*')
+                .eq('brand_id', brandId)
+                .order('name');
+
+            console.log('[SupplierStore] Query result:', { data, error });
+
+            if (error) throw error;
+
+            // Filter is_active ở frontend thay vì DB để debug
+            const activeSuppliers = (data || []).filter(s => s.is_active !== false);
+            const suppliers = activeSuppliers.map(s => ({ ...s, debt_balance: s.debt_balance || 0 }));
+
+            console.log('[SupplierStore] Loaded suppliers:', suppliers.length);
+            set({ suppliers, isLoading: false });
+        } catch (err: any) {
+            console.error('[SupplierStore] Error:', err);
+            set({ error: err.message, isLoading: false });
+        }
+    },
+
+    // Alias for backward compatibility
+    loadSuppliers: async () => {
+        return get().fetchSuppliers();
+    },
+
+    // Get suppliers with outstanding debt
+    getSuppliersWithDebt: () => {
+        return get().suppliers.filter(s => (s.debt_balance || 0) > 0);
+    },
+
+    // Pay supplier debt
+    payDebt: async (supplierId: string, amount: number) => {
+        if (!isSupabaseConfigured()) return false;
+
+        try {
+            const supplier = get().suppliers.find(s => s.id === supplierId);
+            if (!supplier) return false;
+
+            const newBalance = Math.max(0, (supplier.debt_balance || 0) - amount);
+
+            const { error } = await supabase
+                .from('suppliers')
+                .update({ debt_balance: newBalance, updated_at: new Date().toISOString() })
+                .eq('id', supplierId);
+
+            if (error) throw error;
+
+            set(state => ({
+                suppliers: state.suppliers.map(s =>
+                    s.id === supplierId ? { ...s, debt_balance: newBalance } : s
+                )
+            }));
+            return true;
+        } catch (err: any) {
+            set({ error: err.message });
+            return false;
+        }
+    },
+
+    fetchSupplierProducts: async (supplierId?: string) => {
+        if (!isSupabaseConfigured()) return;
+
+        set({ isLoading: true, error: null });
+        try {
+            const brandId = useBrandStore.getState().currentBrand?.id || useAuthStore.getState().brandId;
+            if (!brandId) throw new Error('No brand selected');
+
+            let query = supabase
+                .from('supplier_products')
+                .select(`
+                    *,
+                    suppliers(name),
+                    products(name, sku)
+                `)
+                .eq('brand_id', brandId);
+
+            if (supplierId) {
+                query = query.eq('supplier_id', supplierId);
+            }
+
+            const { data, error } = await query.order('created_at', { ascending: false });
+
+            if (error) throw error;
+
+            const mapped = (data || []).map((sp: any) => ({
+                ...sp,
+                supplier_name: sp.suppliers?.name,
+                product_name: sp.products?.name,
+                product_sku: sp.products?.sku,
+            }));
+
+            set({ supplierProducts: mapped, isLoading: false });
+        } catch (err: any) {
+            set({ error: err.message, isLoading: false });
+        }
+    },
+
+    getSupplier: (id: string) => {
+        return get().suppliers.find(s => s.id === id);
+    },
+
+    createSupplier: async (supplier: Partial<Supplier>) => {
+        if (!isSupabaseConfigured()) return null;
+
+        try {
+            const brandId = useBrandStore.getState().currentBrand?.id || useAuthStore.getState().brandId;
+            if (!brandId) throw new Error('No brand selected');
+
+            const { data, error } = await supabase
+                .from('suppliers')
+                .insert({ ...supplier, brand_id: brandId })
+                .select()
+                .single();
+
+            if (error) throw error;
+
+            set(state => ({ suppliers: [...state.suppliers, data] }));
+            return data;
+        } catch (err: any) {
+            set({ error: err.message });
+            return null;
+        }
+    },
+
+    updateSupplier: async (id: string, updates: Partial<Supplier>) => {
+        if (!isSupabaseConfigured()) return false;
+
+        try {
+            const { error } = await supabase
+                .from('suppliers')
+                .update({ ...updates, updated_at: new Date().toISOString() })
+                .eq('id', id);
+
+            if (error) throw error;
+
+            set(state => ({
+                suppliers: state.suppliers.map(s =>
+                    s.id === id ? { ...s, ...updates } : s
+                )
+            }));
+            return true;
+        } catch (err: any) {
+            set({ error: err.message });
+            return false;
+        }
+    },
+
+    deleteSupplier: async (id: string) => {
+        if (!isSupabaseConfigured()) return false;
+
+        try {
+            // Soft delete - set is_active = false
+            const { error } = await supabase
+                .from('suppliers')
+                .update({ is_active: false })
+                .eq('id', id);
+
+            if (error) throw error;
+
+            set(state => ({
+                suppliers: state.suppliers.filter(s => s.id !== id)
+            }));
+            return true;
+        } catch (err: any) {
+            set({ error: err.message });
+            return false;
+        }
+    },
+
+    addSupplierProduct: async (sp: Partial<SupplierProduct>) => {
+        if (!isSupabaseConfigured()) return false;
+
+        try {
+            const brandId = useBrandStore.getState().currentBrand?.id || useAuthStore.getState().brandId;
+            if (!brandId) throw new Error('No brand selected');
+
+            const { data, error } = await supabase
+                .from('supplier_products')
+                .insert({ ...sp, brand_id: brandId })
+                .select()
+                .single();
+
+            if (error) throw error;
+
+            set(state => ({ supplierProducts: [...state.supplierProducts, data] }));
+            return true;
+        } catch (err: any) {
+            set({ error: err.message });
+            return false;
+        }
+    },
+
+    updateSupplierProduct: async (id: string, updates: Partial<SupplierProduct>) => {
+        if (!isSupabaseConfigured()) return false;
+
+        try {
+            const { error } = await supabase
+                .from('supplier_products')
+                .update({ ...updates, updated_at: new Date().toISOString() })
+                .eq('id', id);
+
+            if (error) throw error;
+
+            set(state => ({
+                supplierProducts: state.supplierProducts.map(sp =>
+                    sp.id === id ? { ...sp, ...updates } : sp
+                )
+            }));
+            return true;
+        } catch (err: any) {
+            set({ error: err.message });
+            return false;
+        }
+    },
+
+    removeSupplierProduct: async (id: string) => {
+        if (!isSupabaseConfigured()) return false;
+
+        try {
+            const { error } = await supabase
+                .from('supplier_products')
+                .delete()
+                .eq('id', id);
+
+            if (error) throw error;
+
+            set(state => ({
+                supplierProducts: state.supplierProducts.filter(sp => sp.id !== id)
+            }));
+            return true;
+        } catch (err: any) {
+            set({ error: err.message });
+            return false;
+        }
+    },
+
+    getBestSupplierForProduct: (productId: string) => {
+        const suppliers = get().supplierProducts.filter(sp => sp.product_id === productId);
+        if (suppliers.length === 0) return null;
+
+        // Prefer: is_preferred > lowest price > most recent import
+        const preferred = suppliers.find(sp => sp.is_preferred);
+        if (preferred) return preferred;
+
+        return suppliers.sort((a, b) => a.last_import_price - b.last_import_price)[0];
+    },
+
+    getProductSuppliers: (productId: string) => {
+        return get().supplierProducts.filter(sp => sp.product_id === productId);
+    },
+}));

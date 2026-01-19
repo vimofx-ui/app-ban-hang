@@ -26,8 +26,8 @@ interface ScannerState {
  */
 export function useBarcodeScanner({
     onScan,
-    minLength = 8,
-    maxLength = 20,
+    minLength = 3, // Allow short codes
+    maxLength = 256, // Allow QR codes / URLs
     timeout = 50, // 50ms between keystrokes is typical for scanners
     enabled = true,
     scannerPrefix = '',
@@ -46,8 +46,9 @@ export function useBarcodeScanner({
 
             // Validate length
             if (cleaned.length >= minLength && cleaned.length <= maxLength) {
-                // Validate it looks like a barcode (numbers or alphanumeric)
-                if (/^[A-Za-z0-9]+$/.test(cleaned)) {
+                // Relaxed validation: Allow alphanumeric + standard symbols
+                // QR codes often contain: - . _ : / ? = &
+                if (/^[A-Za-z0-9\-\.\_\:\/\?\=\&\s]+$/.test(cleaned)) {
                     console.log('🔊 Barcode scanned:', cleaned);
                     onScan(cleaned);
                     return true;

@@ -9,10 +9,18 @@ import { cn } from '@/lib/utils';
 import { useReportStore } from '@/stores/reportStore';
 import { useProductStore } from '@/stores/productStore';
 import { useOrderStore } from '@/stores/orderStore';
+import { useAuthStore } from '@/stores/authStore';
+import { useBranchStore } from '@/stores/branchStore';
+import { useStockTransferStore } from '@/stores/stockTransferStore';
 import { supabase } from '@/lib/supabase';
 import type { Product, Order } from '@/types';
 import { ProductDetailsModal } from '@/components/products/ProductDetailsModal';
 import { OrderDetailsModal } from '@/components/orders/OrderDetailsModal';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
+import { MobileDashboard } from '@/components/dashboard/MobileDashboard';
+import { LowStockWidget } from '@/components/dashboard/LowStockWidget';
+import { PlanUsageCard } from '@/components/common/PlanLimitWarning';
+
 
 export function Dashboard() {
     const navigate = useNavigate();
@@ -27,6 +35,38 @@ export function Dashboard() {
 
     // Order store for counts
     const { orders, loadOrders } = useOrderStore();
+
+    // Branch info for header display
+    const { branchId, brandId } = useAuthStore();
+    const { branches, fetchBranches } = useBranchStore();
+
+    // Lấy tên chi nhánh hiện tại
+    const currentBranchName = useMemo(() => {
+        const branch = branches.find(b => b.id === branchId);
+        return branch?.name || 'Tất cả chi nhánh';
+    }, [branches, branchId]);
+
+    // Fetch branches khi có brandId
+    useEffect(() => {
+        if (brandId) {
+            fetchBranches(brandId);
+        }
+    }, [brandId, fetchBranches]);
+
+    // Stock Transfer stats
+    const { transfers, fetchTransfers } = useStockTransferStore();
+    useEffect(() => {
+        if (brandId) {
+            fetchTransfers(brandId);
+        }
+    }, [brandId, fetchTransfers]);
+
+    const transferStats = useMemo(() => ({
+        pending: transfers.filter(t => t.status === 'pending').length,
+        inTransit: transfers.filter(t => t.status === 'in_transit').length,
+        completed: transfers.filter(t => t.status === 'completed').length,
+        cancelled: transfers.filter(t => t.status === 'cancelled').length,
+    }), [transfers]);
 
     // Calculate order counts by status
     const orderCounts = useMemo(() => {
@@ -110,6 +150,11 @@ export function Dashboard() {
     };
 
     const avgOrderValue = totalOrders > 0 ? Math.round(totalRevenue / totalOrders) : 0;
+    const { isMobile } = useBreakpoint();
+
+    if (isMobile) {
+        return <MobileDashboard />;
+    }
 
     return (
         <div className="min-h-screen">
@@ -119,7 +164,12 @@ export function Dashboard() {
                     <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
                         <div>
                             <h1 className="text-2xl font-bold text-gray-900">Xin chào! 👋</h1>
-                            <p className="text-gray-500">Tổng quan cửa hàng • {getDateLabel()}</p>
+                            <p className="text-gray-500">
+                                Tổng quan cửa hàng • {getDateLabel()}
+                                <span className="ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary-100 text-primary-800">
+                                    📍 {currentBranchName}
+                                </span>
+                            </p>
                         </div>
                         <div className="flex items-center gap-3 flex-wrap">
                             {/* Date Filter Buttons */}
@@ -299,6 +349,63 @@ export function Dashboard() {
                     </div>
                 </div>
 
+                {/* Stock Transfer Summary Panel */}
+                <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
+                    <div className="flex justify-between items-center mb-4">
+                        <h3 className="text-lg font-semibold text-gray-900">
+                            🔄 Chuyển kho giữa các chi nhánh
+                        </h3>
+                        <button
+                            onClick={() => navigate('/ton-kho')}
+                            className="text-sm text-primary hover:underline"
+                        >
+                            Xem tất cả
+                        </button>
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div
+                            onClick={() => navigate('/ton-kho')}
+                            className="flex flex-col items-center p-4 bg-amber-50 rounded-xl border border-amber-100 hover:bg-amber-100 cursor-pointer transition-colors"
+                        >
+                            <div className="w-10 h-10 bg-amber-100 rounded-full flex items-center justify-center mb-2">
+                                <span className="text-lg">📝</span>
+                            </div>
+                            <span className="text-xs text-gray-600 text-center">Chờ xuất</span>
+                            <span className="text-xl font-bold text-amber-600">{transferStats.pending}</span>
+                        </div>
+                        <div
+                            onClick={() => navigate('/ton-kho')}
+                            className="flex flex-col items-center p-4 bg-blue-50 rounded-xl border border-blue-100 hover:bg-blue-100 cursor-pointer transition-colors"
+                        >
+                            <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center mb-2">
+                                <span className="text-lg">🚚</span>
+                            </div>
+                            <span className="text-xs text-gray-600 text-center">Đang chuyển</span>
+                            <span className="text-xl font-bold text-blue-600">{transferStats.inTransit}</span>
+                        </div>
+                        <div
+                            onClick={() => navigate('/ton-kho')}
+                            className="flex flex-col items-center p-4 bg-green-50 rounded-xl border border-green-100 hover:bg-green-100 cursor-pointer transition-colors"
+                        >
+                            <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center mb-2">
+                                <span className="text-lg">✅</span>
+                            </div>
+                            <span className="text-xs text-gray-600 text-center">Hoàn thành</span>
+                            <span className="text-xl font-bold text-green-600">{transferStats.completed}</span>
+                        </div>
+                        <div
+                            onClick={() => navigate('/ton-kho')}
+                            className="flex flex-col items-center p-4 bg-gray-50 rounded-xl border border-gray-200 hover:bg-gray-100 cursor-pointer transition-colors"
+                        >
+                            <div className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center mb-2">
+                                <span className="text-lg">❌</span>
+                            </div>
+                            <span className="text-xs text-gray-600 text-center">Đã hủy</span>
+                            <span className="text-xl font-bold text-gray-500">{transferStats.cancelled}</span>
+                        </div>
+                    </div>
+                </div>
+
                 {/* Two column layout */}
                 <div className="grid lg:grid-cols-2 gap-6">
                     {/* Top Products */}
@@ -392,6 +499,11 @@ export function Dashboard() {
                             Xem tất cả đơn hàng →
                         </button>
                     </div>
+                </div>
+
+                {/* Low Stock Alert Widget */}
+                <div className="mt-6">
+                    <LowStockWidget />
                 </div>
             </main>
 

@@ -1,0 +1,1072 @@
+Mình đã xem kỹ toàn bộ mô tả + các màn hình bạn gửi 👍
+Hiện tại hướng đi của bạn đúng chuẩn một SaaS POS đa thương hiệu – đa chi nhánh giống Sapo / KiotViet. Tuy nhiên để scale tốt, dễ quản lý, dễ bán và tránh “đập đi làm lại”, bạn nên chuẩn hóa lại kiến trúc ngay từ bây giờ.
+
+Dưới đây là phân tích + đề xuất giải pháp tổng thể, đi từ kiến trúc – dữ liệu – domain – phân quyền – tính năng cần bổ sung.
+
+1. Kiến trúc tổng thể nên hướng tới (RẤT QUAN TRỌNG)
+1.1 Mô hình đa tenant (Multi-tenant SaaS)
+
+Bạn đang làm đúng hướng với khái niệm Thương hiệu (Brand), nhưng nên chuẩn hóa như sau:
+
+SaaS (BangoPOS)
+│
+├── System Admin (Super Admin)  → admin.bangopos.com
+│
+├── Brand (Tenant)
+│   ├── Owner (Chủ thương hiệu)
+│   ├── Subscription (Gói dịch vụ)
+│   ├── Custom Domain / Subdomain
+│   │
+│   └── Branch (Chi nhánh)
+│       ├── POS bán hàng
+│       ├── Kho
+│       ├── Nhân viên
+│       └── Báo cáo
+
+
+👉 Brand = 1 tenant độc lập hoàn toàn dữ liệu
+
+2. Phân chia DOMAIN / SUBDOMAIN (bạn đang nghĩ đúng)
+2.1 Domain đề xuất
+Mục đích	Domain
+Landing / Marketing	bangopos.com
+SaaS Admin (Super Admin)	admin.bangopos.com
+Dashboard Brand	app.bangopos.com hoặc brand.bangopos.com
+Website bán hàng	*.bangopos.com (VD: my-store.bangopos.com)
+Custom domain (sau này)	shop.tenmiencuaban.com
+
+👉 KHÔNG nên để admin chung domain với app người dùng
+
+3. Phân quyền & vai trò (Role-Based Access Control – RBAC)
+3.1 Các vai trò nên có
+Cấp hệ thống (SaaS)
+
+Super Admin
+
+Support Admin
+
+Cấp thương hiệu
+
+Brand Owner
+
+Brand Admin
+
+Cấp chi nhánh
+
+Branch Manager
+
+Cashier
+
+Warehouse Staff
+
+👉 Mỗi user luôn gắn với Brand ID, optional Branch ID
+
+4. Thiết kế DATABASE (CỰC KỲ QUAN TRỌNG)
+4.1 Bảng lõi nên có
+brands
+- id
+- name
+- slug
+- status (active, suspended, deleted)
+- owner_user_id
+- plan_id
+- expired_at
+- created_at
+
+branches
+- id
+- brand_id
+- name
+- address
+- status
+
+users
+- id
+- brand_id
+- branch_id (nullable)
+- role
+- email
+- password
+
+subscriptions
+- id
+- brand_id
+- plan_id
+- started_at
+- expired_at
+
+plans
+- id
+- name
+- price
+- max_branches
+- features (json)
+
+
+👉 TẤT CẢ bảng nghiệp vụ đều có brand_id
+
+5. Về QUẢN LÝ THƯƠNG HIỆU (màn hình bạn gửi)
+5.1 Những gì bạn làm tốt
+
+✅ Có danh sách thương hiệu
+✅ Có gói dịch vụ
+✅ Có trạng thái
+✅ Có slug / domain
+
+5.2 Những thứ BẮT BUỘC nên bổ sung
+1️⃣ Xóa thương hiệu (bạn đang hỏi)
+
+⚠️ KHÔNG nên hard delete
+
+Giải pháp chuẩn SaaS:
+
+Soft delete:
+
+status = deleted
+deleted_at = timestamp
+
+
+Khi xóa:
+
+Disable login
+
+Disable subdomain
+
+Ngừng billing
+
+Ẩn dữ liệu khỏi dashboard
+
+👉 SaaS lớn KHÔNG bao giờ xóa cứng dữ liệu khách
+
+2️⃣ Trạng thái thương hiệu rõ ràng hơn
+Trạng thái	Ý nghĩa
+trial	Dùng thử
+active	Đang hoạt động
+expired	Hết hạn
+suspended	Bị khóa
+deleted	Đã xóa
+6. GÓI DỊCH VỤ – BẢNG GIÁ (Pricing)
+
+Bạn đang làm đúng hướng, nhưng nên chuẩn hóa:
+
+6.1 Gói nên quyết định:
+
+Số chi nhánh
+
+Số nhân viên
+
+Có website bán hàng không
+
+Có API không
+
+Có đa kho không
+
+Ví dụ:
+
+features: {
+  "max_branches": 3,
+  "max_users": 10,
+  "ecommerce": true,
+  "api": false
+}
+
+
+👉 Khi tạo chi nhánh → check plan trước
+
+7. Website bán hàng (*.bangopos.com)
+7.1 Cách hoạt động đề xuất
+Request: my-store.bangopos.com
+→ Resolve slug = "my-store"
+→ Find brand
+→ Load theme + products
+
+
+Middleware check:
+
+Brand active?
+
+Subscription valid?
+
+Website feature enabled?
+
+8. Kiến trúc frontend (nên làm)
+App	Công nghệ
+Landing	Next.js / Nuxt
+Admin SaaS	React / Vue
+Brand Dashboard	React / Vue
+POS	SPA + Offline (sau này)
+9. Những thứ NÊN phát triển thêm để “ăn tiền”
+
+🔥 Rất quan trọng nếu muốn bán SaaS:
+
+9.1 Audit log
+
+Ai tạo / xóa chi nhánh
+
+Ai sửa giá
+
+Ai hủy đơn
+
+9.2 Billing & hóa đơn
+
+Lịch sử thanh toán
+
+Gia hạn tự động
+
+Nhắc hết hạn
+
+9.3 Giới hạn theo gói
+
+Không cho tạo thêm chi nhánh
+
+Không cho thêm nhân viên
+
+9.4 Backup & Export dữ liệu
+
+CSV
+
+Excel
+
+10. Checklist nhanh cho bạn (hành động ngay)
+
+✅ Chuẩn hóa brand_id ở tất cả bảng
+✅ Tách admin.bangopos.com khỏi app user
+✅ Soft delete thương hiệu
+✅ Chuẩn RBAC
+✅ Kiểm soát feature theo gói
+✅ Subdomain resolver chuẩn
+
+11. Kết luận thẳng thắn
+
+👉 Bạn đang đi đúng 70% con đường của Sapo / KiotViet
+👉 Thiếu 30% còn lại là:
+
+Kiến trúc SaaS chuẩn
+
+Billing
+
+Phân quyền sâu
+
+Soft delete & audit
+
+Nếu bạn muốn, mình có thể:
+
+Vẽ ERD chi tiết
+
+Gợi ý API structure
+
+Review code backend / frontend
+
+Thiết kế flow xóa thương hiệu an toàn
+
+👉 Bạn đang dùng Laravel / NestJS / Node / .NET?
+👉 Frontend Vue hay React?
+
+tôi đang sử dụng sử dụng React + TypeScript + Supabase (PostgreSQL) với kiến trúc serverless/JAMstack.
+Vẽ ERD chi tiết
+
+Gợi ý API structure
+
+Review code backend / frontend
+
+Thiết kế flow xóa thương hiệu an toàn
+thực hiện các điều này
+
+Tuyệt vời 👍
+Stack React + TypeScript + Supabase (PostgreSQL) + Serverless/JAMstack là RẤT PHÙ HỢP để làm SaaS POS như Sapo / KiotViet.
+Mình sẽ làm đầy đủ 4 yêu cầu của bạn, theo thứ tự logic, ở mức có thể triển khai ngay, không lý thuyết suông.
+
+I. ERD CHI TIẾT (Chuẩn SaaS đa thương hiệu – đa chi nhánh)
+
+Thiết kế theo multi-tenant chuẩn, scale tốt, không phải sửa lại sau này.
+
+1. Sơ đồ tổng quan
+auth.users (Supabase)
+   │
+   └── users
+        │
+        └── brands
+              │
+              ├── subscriptions ── plans
+              │
+              ├── branches
+              │      ├── products
+              │      ├── inventories
+              │      ├── orders
+              │      └── staffs
+              │
+              ├── domains
+              └── audit_logs
+
+2. Bảng chi tiết (SQL đề xuất)
+2.1 users (mirror auth.users)
+users (
+  id uuid PK references auth.users(id),
+  brand_id uuid nullable,
+  branch_id uuid nullable,
+  role text, -- super_admin | brand_owner | branch_manager | cashier
+  status text default 'active',
+  created_at timestamptz
+)
+
+2.2 brands (Tenant)
+brands (
+  id uuid PK,
+  name text,
+  slug text unique,
+  owner_user_id uuid,
+  status text, -- trial | active | expired | suspended | deleted
+  deleted_at timestamptz nullable,
+  created_at timestamptz
+)
+
+2.3 branches
+branches (
+  id uuid PK,
+  brand_id uuid FK,
+  name text,
+  address text,
+  status text,
+  created_at timestamptz
+)
+
+2.4 plans
+plans (
+  id uuid PK,
+  name text,
+  price int,
+  billing_cycle text, -- monthly | yearly
+  features jsonb,
+  created_at timestamptz
+)
+
+
+features ví dụ
+
+{
+  "max_branches": 3,
+  "max_users": 10,
+  "ecommerce": true,
+  "api": false
+}
+
+2.5 subscriptions
+subscriptions (
+  id uuid PK,
+  brand_id uuid FK,
+  plan_id uuid FK,
+  status text, -- active | expired | canceled
+  started_at timestamptz,
+  expired_at timestamptz
+)
+
+2.6 domains (subdomain & custom domain)
+domains (
+  id uuid PK,
+  brand_id uuid FK,
+  type text, -- subdomain | custom
+  domain text,
+  verified boolean default false
+)
+
+2.7 audit_logs (CỰC QUAN TRỌNG)
+audit_logs (
+  id uuid PK,
+  brand_id uuid,
+  user_id uuid,
+  action text,
+  payload jsonb,
+  created_at timestamptz
+)
+
+II. API STRUCTURE (Serverless-friendly)
+
+Dùng Supabase RPC + Edge Functions.
+
+1. Auth & Context
+Middleware (Frontend)
+getCurrentContext() {
+  user
+  brand
+  branch
+  subscription
+  plan
+}
+
+2. API đề xuất
+Brand
+POST   /brands
+GET    /brands
+GET    /brands/:id
+PATCH  /brands/:id
+DELETE /brands/:id (soft delete)
+
+Branch
+POST   /brands/:id/branches
+GET    /brands/:id/branches
+DELETE /branches/:id
+
+Subscription
+POST   /subscriptions/upgrade
+GET    /subscriptions/current
+
+Domain Resolver (Edge Function)
+GET /resolve-domain?host=my-store.bangopos.com
+
+3. Supabase RLS (BẮT BUỘC)
+CREATE POLICY "brand_isolation"
+ON brands
+USING (id = auth.jwt() ->> 'brand_id');
+
+
+👉 Không RLS = SaaS FAIL
+
+III. REVIEW KIẾN TRÚC FRONTEND / BACKEND
+1. Frontend Structure (React)
+src/
+ ├── app/
+ │   ├── admin/        → admin.bangopos.com
+ │   ├── dashboard/    → app.bangopos.com
+ │   ├── store/        → *.bangopos.com
+ │
+ ├── lib/
+ │   ├── supabase.ts
+ │   ├── auth.ts
+ │   ├── permissions.ts
+ │
+ ├── hooks/
+ │   ├── useAuth
+ │   ├── useBrand
+ │   ├── usePlan
+
+2. Backend (Supabase)
+❌ Tránh
+
+Logic trong frontend
+
+Không kiểm tra plan
+
+✅ Nên
+
+RPC cho:
+
+create brand
+
+delete brand
+
+upgrade plan
+
+Edge Functions cho:
+
+billing
+
+domain resolve
+
+IV. FLOW XÓA THƯƠNG HIỆU AN TOÀN (CÂU HỎI CỦA BẠN)
+1. UI Flow
+
+1️⃣ Admin bấm Xóa thương hiệu
+2️⃣ Popup cảnh báo:
+
+“Thao tác này sẽ khóa toàn bộ hệ thống. Không thể hoàn tác.”
+
+3️⃣ Nhập:
+
+DELETE my-store
+
+2. Backend Flow (Chuẩn SaaS)
+BEGIN TRANSACTION
+
+UPDATE brands
+SET status = 'deleted', deleted_at = now()
+WHERE id = :brand_id;
+
+UPDATE users SET status = 'disabled'
+WHERE brand_id = :brand_id;
+
+UPDATE subscriptions SET status = 'canceled'
+WHERE brand_id = :brand_id;
+
+INSERT INTO audit_logs (...)
+
+COMMIT;
+
+3. Middleware chặn truy cập
+if (brand.status === 'deleted') {
+  logout()
+  redirect('/expired')
+}
+
+4. KHÔNG BAO GIỜ LÀM
+
+❌ DELETE FROM brands
+❌ Xóa dữ liệu đơn hàng
+❌ Xóa user auth
+
+V. GỢI Ý PHÁT TRIỂN CAO CẤP (ĐỂ VƯỢT SAPO)
+
+🔥 Sau khi xong nền tảng:
+
+White-label
+
+App marketplace
+
+POS offline
+
+API public
+
+Plugin kế toán
+
+VI. KẾT LUẬN
+
+👉 Bạn đang làm đúng kiến trúc của một SaaS POS thực thụ
+👉 Stack của bạn rất tốt, không cần đổi
+👉 Việc cần làm NGAY:
+
+Chuẩn hóa ERD
+
+Thêm RLS
+
+Soft delete brand
+
+Domain resolver
+
+👉 Nếu bạn muốn, bước tiếp theo mình có thể:
+
+Viết SQL + RLS hoàn chỉnh
+
+Viết Edge Function resolve domain
+
+Vẽ flow billing chi tiết
+
+Review repo code thật của bạn
+
+Bạn muốn đi bước nào tiếp theo?
+
+cả 4
+
+OK 👍
+Mình sẽ triển khai đầy đủ cả 4 phần, theo đúng thứ tự từ nền tảng → bảo mật → domain → billing, để bạn có thể áp dụng trực tiếp vào Supabase + React ngay, không nói chung chung.
+
+PHẦN 1 — SQL + RLS HOÀN CHỈNH (Supabase – Multi-tenant chuẩn)
+1. Enable extension & UUID
+create extension if not exists "uuid-ossp";
+
+2. USERS (mirror auth.users)
+create table users (
+  id uuid primary key references auth.users(id) on delete cascade,
+  brand_id uuid,
+  branch_id uuid,
+  role text check (role in (
+    'super_admin',
+    'brand_owner',
+    'brand_admin',
+    'branch_manager',
+    'cashier'
+  )),
+  status text default 'active',
+  created_at timestamptz default now()
+);
+
+3. BRANDS (Tenant)
+create table brands (
+  id uuid primary key default uuid_generate_v4(),
+  name text not null,
+  slug text unique not null,
+  owner_user_id uuid not null,
+  status text default 'trial',
+  deleted_at timestamptz,
+  created_at timestamptz default now()
+);
+
+4. BRANCHES
+create table branches (
+  id uuid primary key default uuid_generate_v4(),
+  brand_id uuid references brands(id),
+  name text,
+  address text,
+  status text default 'active',
+  created_at timestamptz default now()
+);
+
+5. PLANS & SUBSCRIPTIONS
+create table plans (
+  id uuid primary key default uuid_generate_v4(),
+  name text,
+  price int,
+  billing_cycle text,
+  features jsonb,
+  created_at timestamptz default now()
+);
+
+create table subscriptions (
+  id uuid primary key default uuid_generate_v4(),
+  brand_id uuid references brands(id),
+  plan_id uuid references plans(id),
+  status text,
+  started_at timestamptz,
+  expired_at timestamptz
+);
+
+6. DOMAINS
+create table domains (
+  id uuid primary key default uuid_generate_v4(),
+  brand_id uuid references brands(id),
+  type text check (type in ('subdomain', 'custom')),
+  domain text unique,
+  verified boolean default false
+);
+
+7. AUDIT LOGS
+create table audit_logs (
+  id uuid primary key default uuid_generate_v4(),
+  brand_id uuid,
+  user_id uuid,
+  action text,
+  payload jsonb,
+  created_at timestamptz default now()
+);
+
+8. RLS (BẮT BUỘC)
+Enable RLS
+alter table brands enable row level security;
+alter table branches enable row level security;
+alter table users enable row level security;
+
+Policy Brand Isolation
+create policy "brand_isolation"
+on brands
+using (id = (auth.jwt() ->> 'brand_id')::uuid);
+
+Super Admin bypass
+create policy "super_admin_all"
+on brands
+using ((auth.jwt() ->> 'role') = 'super_admin');
+
+
+👉 Nếu không làm RLS → SaaS chắc chắn lỗi bảo mật
+
+PHẦN 2 — EDGE FUNCTION: Resolve Subdomain (*.bangopos.com)
+1. Flow hoạt động
+Request: my-store.bangopos.com
+↓
+Edge Function
+↓
+domains table
+↓
+brand_id
+↓
+brand.status + subscription
+↓
+return config
+
+2. Edge Function (Supabase)
+import { serve } from "https://deno.land/std/http/server.ts";
+import { createClient } from "@supabase/supabase-js";
+
+serve(async (req) => {
+  const host = req.headers.get("host");
+
+  const subdomain = host?.split(".")[0];
+
+  const supabase = createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+  );
+
+  const { data, error } = await supabase
+    .from("domains")
+    .select("brand_id, brands(status)")
+    .eq("domain", subdomain)
+    .single();
+
+  if (error || !data) {
+    return new Response("Not found", { status: 404 });
+  }
+
+  if (data.brands.status !== "active") {
+    return new Response("Brand inactive", { status: 403 });
+  }
+
+  return Response.json({
+    brand_id: data.brand_id
+  });
+});
+
+3. Frontend gọi
+fetch("/functions/v1/resolve-domain", {
+  headers: {
+    host: window.location.host
+  }
+});
+
+PHẦN 3 — BILLING FLOW (Chuẩn SaaS)
+1. Upgrade plan
+POST /subscriptions/upgrade
+
+
+Backend:
+
+Kiểm tra plan
+
+Update subscription
+
+Ghi audit log
+
+2. Middleware kiểm tra quyền
+if (currentBranches >= plan.features.max_branches) {
+  throw new Error("Upgrade plan required");
+}
+
+3. Cron check hết hạn (Edge Cron)
+update subscriptions
+set status = 'expired'
+where expired_at < now();
+
+PHẦN 4 — FLOW XÓA THƯƠNG HIỆU AN TOÀN (CHUẨN ENTERPRISE)
+1. UI
+
+Nút Xóa thương hiệu
+
+Nhập: DELETE my-store
+
+2. RPC: delete_brand()
+create or replace function delete_brand(p_brand_id uuid)
+returns void
+language plpgsql
+as $$
+begin
+  update brands
+  set status = 'deleted',
+      deleted_at = now()
+  where id = p_brand_id;
+
+  update users
+  set status = 'disabled'
+  where brand_id = p_brand_id;
+
+  update subscriptions
+  set status = 'canceled'
+  where brand_id = p_brand_id;
+
+  insert into audit_logs (
+    brand_id, action, payload
+  ) values (
+    p_brand_id,
+    'DELETE_BRAND',
+    jsonb_build_object('by', auth.uid())
+  );
+end;
+$$;
+
+3. Frontend gọi RPC
+await supabase.rpc("delete_brand", {
+  p_brand_id: brandId
+});
+
+4. Middleware chặn
+if (brand.status === "deleted") {
+  supabase.auth.signOut();
+  window.location.href = "/expired";
+}
+
+TỔNG KẾT NGẮN GỌN
+
+Bạn đang xây SaaS POS đúng chuẩn enterprise.
+Với 4 phần trên, hệ thống của bạn sẽ:
+
+✅ Đa thương hiệu, đa chi nhánh chuẩn
+✅ An toàn dữ liệu (RLS)
+✅ Subdomain SaaS hoàn chỉnh
+✅ Billing + lifecycle đúng chuẩn
+✅ Xóa thương hiệu an toàn, không mất dữ liệu
+
+3 mục bạn chọn (Audit log UI – App Marketplace – White-label) chính là “vũ khí SaaS” để BangoPOS vượt Sapo / KiotViet, không chỉ ngang bằng.
+
+Mình sẽ trình bày theo cấu trúc:
+
+1️⃣ Audit Log UI – làm sao hữu dụng, không chỉ để “có”
+2️⃣ App Marketplace – kiến trúc mở, không khóa mình về sau
+3️⃣ White-label – bán SaaS cho chuỗi lớn, agency, reseller
+→ kèm ERD bổ sung + API + UI + lưu ý triển khai với Supabase
+
+2️⃣ AUDIT LOG UI (CỰC KỲ QUAN TRỌNG CHO SAAS)
+A. Tư duy đúng về Audit Log
+
+❌ Sai lầm phổ biến
+
+Ghi log nhưng không ai xem
+
+Log quá chi tiết → chậm & rác
+
+✅ Chuẩn SaaS:
+
+Chỉ log hành động ảnh hưởng dữ liệu / tiền
+
+Log để:
+
+Truy vết lỗi
+
+Tranh chấp nhân viên
+
+Hỗ trợ khách
+
+Compliance (sau này bán enterprise)
+
+B. Các hành động BẮT BUỘC log
+Nhóm	Action
+Auth	LOGIN, LOGOUT, FAILED_LOGIN
+Brand	CREATE_BRAND, DELETE_BRAND
+Branch	CREATE_BRANCH, DELETE_BRANCH
+POS	CREATE_ORDER, CANCEL_ORDER
+Product	UPDATE_PRICE, DELETE_PRODUCT
+Billing	UPGRADE_PLAN, EXPIRED
+User	CREATE_USER, CHANGE_ROLE
+C. ERD audit_logs (chuẩn hóa)
+audit_logs (
+  id uuid PK,
+  brand_id uuid,
+  branch_id uuid,
+  user_id uuid,
+  action text,
+  target_type text, -- order, product, user
+  target_id uuid,
+  payload jsonb,
+  ip text,
+  user_agent text,
+  created_at timestamptz
+)
+
+D. Ghi log (RPC helper – bắt buộc)
+create or replace function log_action(
+  p_action text,
+  p_target_type text,
+  p_target_id uuid,
+  p_payload jsonb
+) returns void
+language plpgsql
+as $$
+begin
+  insert into audit_logs (
+    brand_id,
+    user_id,
+    action,
+    target_type,
+    target_id,
+    payload
+  ) values (
+    (auth.jwt() ->> 'brand_id')::uuid,
+    auth.uid(),
+    p_action,
+    p_target_type,
+    p_target_id,
+    p_payload
+  );
+end;
+$$;
+
+
+👉 Gọi log_action() trong mọi RPC quan trọng
+
+E. UI Audit Log (React)
+Trang: /settings/audit-logs
+
+Filter nên có:
+
+Thời gian
+
+Người dùng
+
+Hành động
+
+Chi nhánh
+
+Table columns:
+
+Thời gian
+
+Người dùng
+
+Hành động
+
+Đối tượng
+
+Chi tiết (expand JSON)
+
+💡 Tip:
+
+Payload hiển thị dạng key-value
+
+Có “Xem chi tiết”
+
+F. Quyền truy cập
+Role	Xem audit
+Brand Owner	✅
+Brand Admin	✅
+Branch Manager	Chỉ branch
+Cashier	❌
+3️⃣ APP MARKETPLACE (KIẾN TRÚC MỞ – KHÔNG KHÓA TƯƠNG LAI)
+A. Tư duy đúng
+
+❌ Làm plugin cứng trong core
+✅ Làm App / Integration tách biệt
+
+Giống:
+
+Shopify App
+
+Slack App
+
+Notion Integration
+
+B. App dùng để làm gì?
+
+Kế toán (MISA, FAST)
+
+Vận chuyển (GHN, GHTK)
+
+Marketing (Zalo, SMS)
+
+CRM
+
+Loyalty
+
+C. ERD Marketplace
+apps (
+  id uuid PK,
+  name text,
+  slug text unique,
+  description text,
+  type text, -- internal | external
+  scopes text[],
+  webhook_url text,
+  status text,
+  created_at timestamptz
+);
+
+brand_apps (
+  id uuid PK,
+  brand_id uuid,
+  app_id uuid,
+  enabled boolean,
+  config jsonb,
+  created_at timestamptz
+);
+
+D. Permission (OAuth-like)
+scopes: [
+  "orders:read",
+  "products:write",
+  "customers:read"
+]
+
+E. API cho App
+GET /api/orders
+POST /api/orders
+GET /api/products
+
+
+Check:
+
+App enabled?
+
+Scope đủ chưa?
+
+F. UI Marketplace
+
+Trang: /apps
+
+Danh sách app
+
+Install / Uninstall
+
+Config (API key, webhook…)
+
+👉 App KHÔNG truy cập DB trực tiếp
+
+G. Lợi ích dài hạn
+
+Bán app
+
+Thu % doanh thu
+
+Mở hệ sinh thái
+
+Agency tự viết app
+
+4️⃣ WHITE-LABEL (VŨ KHÍ KIẾM TIỀN)
+A. White-label là gì?
+
+Cho phép:
+
+Đổi logo
+
+Đổi màu
+
+Đổi domain
+
+Đổi tên hệ thống
+
+👉 Bán cho:
+
+Chuỗi lớn
+
+Agency
+
+Reseller
+
+B. ERD White-label
+white_labels (
+  id uuid PK,
+  brand_id uuid,
+  app_name text,
+  logo_url text,
+  primary_color text,
+  secondary_color text,
+  domain text,
+  created_at timestamptz
+);
+
+C. Áp dụng vào Frontend (React)
+const theme = await fetchBrandTheme();
+
+document.documentElement.style.setProperty(
+  "--primary-color",
+  theme.primary_color
+);
+
+D. Domain white-label
+
+CNAME:
+
+pos.clientdomain.com → app.bangopos.com
+
+
+Table domains đã có → reuse
+
+E. Giới hạn theo gói
+Gói	White-label
+Basic	❌
+Pro	❌
+Enterprise	✅
+F. UI cấu hình
+
+Trang: /settings/white-label
+
+Upload logo
+
+Chọn màu
+
+Domain
+
+Preview realtime
+
+TỔNG KẾT CHIẾN LƯỢC
+
+Với 3 module này, BangoPOS sẽ:
+
+✅ Có Audit log chuẩn enterprise
+✅ Có Marketplace mở rộng vô hạn
+✅ Có White-label để bán B2B lớn
+
+👉 Đây là level SaaS thật, không còn là web app CRUD.

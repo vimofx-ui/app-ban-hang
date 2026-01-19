@@ -7,7 +7,7 @@ import { Link } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
 
 export function ForgotPasswordPage() {
-    const { resetPassword, loading, error, clearError } = useAuthStore();
+    const { resetPassword, isLoading, error, clearError } = useAuthStore();
 
     const [email, setEmail] = useState('');
     const [submitted, setSubmitted] = useState(false);
@@ -80,7 +80,7 @@ export function ForgotPasswordPage() {
                                 Vui lòng kiểm tra hộp thư của bạn tại <strong>{email}</strong> để đặt lại mật khẩu.
                             </p>
                             <Link
-                                to="/login"
+                                to="/dang-nhap"
                                 style={{
                                     display: 'inline-block',
                                     padding: '12px 24px',
@@ -137,25 +137,26 @@ export function ForgotPasswordPage() {
                             {/* Submit Button */}
                             <button
                                 type="submit"
-                                disabled={loading}
+                                disabled={isLoading}
                                 style={{
                                     width: '100%',
                                     padding: '12px',
                                     borderRadius: '12px',
                                     fontWeight: '600',
                                     color: 'white',
-                                    background: loading ? '#9ca3af' : 'linear-gradient(to right, #22c55e, #16a34a)',
+                                    background: isLoading ? '#9ca3af' : 'linear-gradient(to right, #22c55e, #16a34a)',
                                     border: 'none',
-                                    cursor: loading ? 'not-allowed' : 'pointer',
-                                    fontSize: '16px'
+                                    cursor: isLoading ? 'not-allowed' : 'pointer',
+                                    fontSize: '16px',
+                                    boxShadow: isLoading ? 'none' : '0 10px 15px -3px rgba(34,197,94,0.3)'
                                 }}
                             >
-                                {loading ? 'Đang gửi...' : 'Gửi link đặt lại mật khẩu'}
+                                {isLoading ? 'Đang gửi link...' : 'Gửi link đặt lại mật khẩu'}
                             </button>
 
                             {/* Back to Login */}
                             <div style={{ marginTop: '16px', textAlign: 'center' }}>
-                                <Link to="/login" style={{ fontSize: '14px', color: '#16a34a', fontWeight: '500', textDecoration: 'none' }}>
+                                <Link to="/dang-nhap" style={{ fontSize: '14px', color: '#16a34a', fontWeight: '500', textDecoration: 'none' }}>
                                     ← Quay lại đăng nhập
                                 </Link>
                             </div>

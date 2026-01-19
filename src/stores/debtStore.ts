@@ -6,13 +6,14 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { DebtPayment, UUID } from '@/types';
 import { useAuthStore } from './authStore';
+import { createBaseState } from './baseStore';
+import type { BaseState } from './baseStore';
 
 // Generate unique ID
 const generateId = () => `debt-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
-interface DebtState {
+interface DebtState extends BaseState {
     payments: DebtPayment[];
-    isLoading: boolean;
 
     // Actions
     loadPayments: () => void;
@@ -33,8 +34,10 @@ interface DebtState {
 export const useDebtStore = create<DebtState>()(
     persist(
         (set, get) => ({
+            ...createBaseState(),
             payments: [],
             isLoading: false,
+            error: null,
 
             loadPayments: () => {
                 // Payments are loaded from localStorage via persist

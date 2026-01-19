@@ -247,7 +247,7 @@ export function BarcodePrintPage() {
             {/* BARCODE LABELS TAB */}
             {activeTab === 'barcode' && (
                 <div className="container-app py-6">
-                    <div className="grid lg:grid-cols-3 gap-6">
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                         {/* LEFT: Settings Panel */}
                         <div className="lg:col-span-2 space-y-4">
                             {/* Layout Settings */}
@@ -495,13 +495,15 @@ export function BarcodePrintPage() {
                                 ) : (
                                     <div className="space-y-2">
                                         {printQueue.map((item) => (
-                                            <div key={item.id} className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
-                                                <div className="flex-1 min-w-0">
+                                            <div key={item.id} className="flex flex-col sm:flex-row items-start sm:items-center gap-3 p-3 bg-gray-50 rounded-lg">
+                                                <div className="flex-1 min-w-0 w-full">
                                                     <p className="font-medium text-sm truncate">{item.name}</p>
-                                                    <p className="text-xs text-gray-400">{item.barcode}</p>
-                                                    <p className="text-xs font-medium text-orange-600">{formatVND(item.price)}</p>
+                                                    <div className="flex items-center justify-between sm:block mt-1 sm:mt-0">
+                                                        <p className="text-xs text-gray-400">{item.barcode}</p>
+                                                        <p className="text-xs font-medium text-orange-600 sm:mt-1">{formatVND(item.price)}</p>
+                                                    </div>
                                                 </div>
-                                                <div className="flex items-center gap-2">
+                                                <div className="flex items-center gap-2 w-full sm:w-auto justify-end border-t sm:border-t-0 pt-2 sm:pt-0 mt-2 sm:mt-0">
                                                     <span className="text-xs text-gray-500">Sl Tem</span>
                                                     <input
                                                         type="number"
@@ -526,7 +528,7 @@ export function BarcodePrintPage() {
 
                         {/* RIGHT: Preview */}
                         <div className="lg:col-span-1">
-                            <div className="bg-slate-600 rounded-xl p-4 sticky top-4">
+                            <div className="bg-slate-600 rounded-xl p-4 relative lg:sticky lg:top-4">
                                 <div className="flex justify-between items-center mb-3">
                                     <h3 className="font-medium text-white">👁️ Xem Trước Tem</h3>
                                     <button

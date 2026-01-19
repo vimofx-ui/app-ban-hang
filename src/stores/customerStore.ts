@@ -7,6 +7,11 @@ import { persist } from 'zustand/middleware';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import type { Customer } from '@/types';
 import { generateId } from '@/lib/utils';
+import { createBaseState, withAsync } from './baseStore';
+import type { BaseState } from './baseStore';
+import { logAction } from '@/lib/audit';
+import { cacheCustomers, getCachedCustomers } from '@/lib/indexedDBCache';
+import { toast } from 'sonner';
 
 // Mock customers for demo
 const MOCK_CUSTOMERS: Customer[] = [
@@ -55,10 +60,8 @@ const MOCK_CUSTOMERS: Customer[] = [
     },
 ];
 
-export interface CustomerState {
+export interface CustomerState extends BaseState {
     customers: Customer[];
-    isLoading: boolean;
-    error: string | null;
 
     loadCustomers: () => Promise<void>;
     addCustomer: (customer: Omit<Customer, 'id' | 'created_at'>) => Promise<Customer>;
@@ -93,31 +96,68 @@ export const useCustomerStore = create<CustomerState>()(
                             .order('name');
 
                         if (error) throw error;
-                        set({ customers: data as Customer[], isLoading: false });
+
+                        const customers = data as Customer[];
+                        set({ customers, isLoading: false });
+
+                        // Cache for offline use
+                        cacheCustomers(customers);
+
                     } catch (err) {
                         console.error('Failed to load customers:', err);
-                        // On error, keep existing customers or use mock
-                        const currentCustomers = get().customers;
-                        if (currentCustomers.length === 0) {
-                            set({ error: 'Không thể tải khách hàng', isLoading: false, customers: MOCK_CUSTOMERS });
+
+                        // Try to load from cache
+                        console.log('Loading customers from cache...');
+                        const cachedCustomers = await getCachedCustomers();
+
+                        if (cachedCustomers.length > 0) {
+                            set({
+                                customers: cachedCustomers,
+                                isLoading: false,
+                                error: 'Đang hiển thị dữ liệu offline'
+                            });
+                            toast('Đã tải danh sách khách hàng từ bộ nhớ đệm (Offline)', { icon: '📡' });
                         } else {
-                            set({ error: 'Không thể tải khách hàng', isLoading: false });
+                            // Only use dummy data if absolutely nothing in cache
+                            const currentCustomers = get().customers;
+                            if (currentCustomers.length === 0) {
+                                set({ error: 'Không thể tải khách hàng', isLoading: false, customers: MOCK_CUSTOMERS });
+                            } else {
+                                set({ error: 'Không thể tải khách hàng', isLoading: false });
+                            }
                         }
                     }
                 } else {
-                    // Demo mode: Only init with MOCK if no customers exist yet (preserve persisted data)
-                    const currentCustomers = get().customers;
-                    if (currentCustomers.length === 0) {
-                        set({ customers: MOCK_CUSTOMERS, isLoading: false });
+                    // Demo mode: Try cache first, then mock
+                    const cachedCustomers = await getCachedCustomers();
+                    if (cachedCustomers.length > 0) {
+                        set({ customers: cachedCustomers, isLoading: false });
                     } else {
-                        set({ isLoading: false });
+                        // Only init with MOCK if no cache and no customers
+                        const currentCustomers = get().customers;
+                        if (currentCustomers.length === 0) {
+                            set({ customers: MOCK_CUSTOMERS, isLoading: false });
+                        } else {
+                            set({ isLoading: false });
+                        }
                     }
                 }
             },
 
             addCustomer: async (customerData) => {
+                // Auto-generate customer code if not provided
+                let customerCode = customerData.code;
+                if (!customerCode || customerCode.trim() === '') {
+                    const now = new Date();
+                    const year = now.getFullYear().toString().slice(-2);
+                    const month = (now.getMonth() + 1).toString().padStart(2, '0');
+                    const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+                    customerCode = `KH${year}${month}${random}`;
+                }
+
                 const newCustomer: Customer = {
                     ...customerData,
+                    code: customerCode,
                     id: generateId(),
                     created_at: new Date().toISOString(),
                 };

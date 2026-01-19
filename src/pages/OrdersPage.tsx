@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { useOrderStore } from '@/stores/orderStore';
+import { useOrderStore, subscribeOrders } from '@/stores/orderStore';
+import { useAuthStore } from '@/stores/authStore';
 import { formatVND } from '@/lib/cashReconciliation';
 import { cn } from '@/lib/utils';
 import type { Order, OrderItem, OrderStatus } from '@/types';
@@ -17,10 +18,12 @@ import { DEFAULT_SHIPPING_LABEL_CONFIG, type ShippingLabelConfig as TemplateConf
 
 import { OrderStats } from '@/components/orders/OrderStats';
 import { CompactOrderDetails } from '@/components/orders/CompactOrderDetails';
-import { ChevronRight, ChevronDown } from 'lucide-react';
+import { ChevronRight, ChevronDown, Search, Filter, ExternalLink, MoreVertical, Printer, ArrowUpRight, ArrowDownLeft, Clock, CheckCircle, XCircle, Truck, Package } from 'lucide-react';
+import { toast } from 'sonner';
 
-export function OrdersPage() {
+export const OrdersPage = () => {
     const { orders, isLoading, loadOrders, processReturn, updateOrder, finalizeDeliveryOrder } = useOrderStore();
+    const { user } = useAuthStore();
     const [searchQuery, setSearchQuery] = useState('');
     const [activeStatus, setActiveStatus] = useState<OrderStatus | 'all'>('all');
     const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
@@ -95,13 +98,30 @@ export function OrdersPage() {
 
     const handleReturn = async (items: { itemId: string; quantity: number }[], reason: string) => {
         if (!returnOrder) return;
+
+        // Prepare print data logic
+        const returnItemsDetails = items.map(i => {
+            const originalItem = returnOrder.order_items?.find(oi => oi.id === i.itemId);
+            return {
+                ...i,
+                name: originalItem?.product?.name || 'Sản phẩm',
+                unitName: originalItem?.unit?.unit_name || originalItem?.product?.base_unit || 'Cái',
+                unitPrice: originalItem?.unit_price || 0,
+                reason
+            };
+        });
+        const refundAmount = returnItemsDetails.reduce((sum, item) => sum + (item.unitPrice * item.quantity), 0);
+
         const success = await processReturn(returnOrder, items, reason);
         if (success) {
-            alert('Đã tạo đơn trả hàng thành công!');
+            toast.success('Đã tạo đơn trả hàng thành công!');
+
+            if (window.confirm('Bạn có muốn in phiếu trả hàng không?')) {
+                printReturnReceipt(returnOrder, returnItemsDetails, reason, refundAmount);
+            }
             setReturnOrder(null);
-            // Dont close selected order if open
         } else {
-            alert('Có lỗi xảy ra khi trả hàng.');
+            toast.error('Có lỗi xảy ra khi trả hàng.');
         }
     };
 
@@ -135,21 +155,25 @@ export function OrdersPage() {
     return (
         <div className="min-h-screen bg-gray-50">
             <header className="bg-white border-b border-gray-200 sticky top-0 z-10 shadow-sm">
-                <div className="container-app py-5">
-                    <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
+                <div className="container-app py-4 md:py-5">
+                    <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-4 md:mb-6">
                         <div>
-                            <h1 className="text-2xl font-bold text-gray-900 bg-clip-text text-transparent bg-gradient-to-r from-green-600 to-teal-600">Quản lý đơn hàng</h1>
-                            <p className="text-sm text-gray-500 mt-1">Theo dõi và xử lý các đơn hàng từ mọi kênh bán</p>
+                            <h1 className="text-xl md:text-2xl font-bold text-gray-900 bg-clip-text text-transparent bg-gradient-to-r from-green-600 to-teal-600">Quản lý đơn hàng</h1>
+                            <p className="hidden md:block text-sm text-gray-500 mt-1">Theo dõi và xử lý các đơn hàng từ mọi kênh bán</p>
                         </div>
-                        <div className="flex gap-3 w-full md:w-auto">
+                        <div className="flex gap-2 w-full md:w-auto">
                             <button
                                 onClick={() => loadOrders()}
-                                className="px-4 py-2 bg-white border border-gray-200 hover:bg-green-50 hover:border-green-200 hover:text-green-700 rounded-lg text-sm font-medium transition-all shadow-sm flex items-center gap-2"
+                                className="p-2 md:px-4 md:py-2 bg-white border border-gray-200 hover:bg-green-50 hover:border-green-200 hover:text-green-700 rounded-lg text-sm font-medium transition-all shadow-sm flex items-center gap-2"
+                                title="Làm mới"
                             >
-                                🔄 Làm mới
+                                <span>🔄</span>
+                                <span className="hidden md:inline">Làm mới</span>
                             </button>
-                            <button className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium shadow-md transition-all flex items-center gap-2">
-                                + Tạo đơn hàng
+                            <button className="flex-1 md:flex-none px-3 md:px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium shadow-md transition-all flex items-center justify-center gap-2">
+                                <span>+</span>
+                                <span className="hidden md:inline">Tạo đơn hàng</span>
+                                <span className="md:hidden">Tạo đơn</span>
                             </button>
                         </div>
                     </div>
@@ -163,16 +187,16 @@ export function OrdersPage() {
 
                     <div className="flex flex-col md:flex-row gap-4 justify-between items-end">
                         {/* Status Tabs */}
-                        <div className="flex-1 w-full overflow-x-auto pb-1 scrollbar-hide">
+                        <div className="flex-1 w-full overflow-x-auto pb-2 scrollbar-hide -mx-4 px-4 md:mx-0 md:px-0">
                             <div className="flex gap-2">
                                 {tabs.map(tab => (
                                     <button
                                         key={tab.id}
                                         onClick={() => { setActiveStatus(tab.id as any); setCurrentPage(1); }}
                                         className={cn(
-                                            "px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-all border",
+                                            "px-3 py-1.5 md:px-4 md:py-2 rounded-lg text-xs md:text-sm font-medium whitespace-nowrap transition-all border",
                                             activeStatus === tab.id
-                                                ? "bg-green-600 text-white border-green-600 shadow-md transform scale-105"
+                                                ? "bg-green-600 text-white border-green-600 shadow-md"
                                                 : "bg-white text-gray-600 border-gray-200 hover:bg-gray-50 hover:border-gray-300"
                                         )}
                                     >
@@ -183,7 +207,7 @@ export function OrdersPage() {
                         </div>
 
                         {/* Search & Filter */}
-                        <div className="relative w-full md:w-80">
+                        <div className="relative w-full md:w-80 mt-2 md:mt-0">
                             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">🔍</span>
                             <input
                                 type="text"
@@ -211,7 +235,54 @@ export function OrdersPage() {
             <main className="container-app py-6">
                 {isLoading ? <div className="text-center py-12">Đang tải...</div> : (
                     <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
-                        <table className="w-full">
+                        {/* Mobile Cards */}
+                        <div className="lg:hidden divide-y divide-gray-100">
+                            {paginatedOrders.map((order) => (
+                                <div
+                                    key={order.id}
+                                    onClick={() => setSelectedOrder(order)}
+                                    className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm active:bg-gray-50 mb-3 transition-colors"
+                                >
+                                    <div className="flex items-start justify-between mb-3">
+                                        <div>
+                                            <div className="font-bold text-gray-900 text-base">{order.order_number}</div>
+                                            <div className="text-xs text-gray-500 mt-0.5 flex items-center gap-1">
+                                                📅 {new Date(order.created_at).toLocaleDateString('vi-VN')} {new Date(order.created_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
+                                            </div>
+                                        </div>
+                                        <OrderStatusBadge status={order.status} />
+                                    </div>
+
+                                    <div className="flex items-center gap-3 mb-3 pb-3 border-b border-gray-50">
+                                        <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center text-xl shrink-0">
+                                            👤
+                                        </div>
+                                        <div>
+                                            <div className="font-medium text-sm text-gray-900">{order.customer?.name || 'Khách lẻ'}</div>
+                                            <div className="text-xs text-gray-500">{order.customer?.phone || '---'}</div>
+                                        </div>
+                                    </div>
+
+                                    <div className="flex items-center justify-between">
+                                        <div className="flex flex-col">
+                                            <span className="text-xs text-gray-500 mb-0.5">Tổng tiền</span>
+                                            <span className="font-bold text-green-600 text-lg">{formatVND(order.total_amount)}</span>
+                                        </div>
+                                        <div className={cn(
+                                            "px-3 py-1 rounded-lg text-xs font-medium border",
+                                            order.payment_status === 'paid' ? "bg-green-50 text-green-700 border-green-200" :
+                                                order.payment_status === 'partially_paid' ? "bg-yellow-50 text-yellow-700 border-yellow-200" :
+                                                    "bg-red-50 text-red-700 border-red-200"
+                                        )}>
+                                            {order.payment_status === 'paid' ? 'Đã thanh toán' : order.payment_status === 'partially_paid' ? 'Thanh toán 1 phần' : 'Chưa thanh toán'}
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+
+                        {/* Desktop Table */}
+                        <table className="hidden lg:table w-full">
                             <thead className="bg-green-50 border-b border-green-100">
                                 <tr>
                                     <th className="w-10 px-3 py-3"></th>

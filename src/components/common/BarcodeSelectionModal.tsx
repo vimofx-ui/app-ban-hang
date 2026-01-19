@@ -224,13 +224,19 @@ export function BarcodeSelectionModal({ matches, onSelect, onClose }: BarcodeSel
     );
 }
 
-// Helper function to find all products/units matching a barcode
+// Helper function to find all products/units matching a barcode or SKU
 export function findProductsByBarcode(products: Product[], barcode: string): BarcodeMatch[] {
     const matches: BarcodeMatch[] = [];
+    if (!barcode) return matches;
+
+    const searchTerm = barcode.trim().toLowerCase();
 
     for (const product of products) {
-        // Check main product barcode
-        if (product.barcode === barcode) {
+        const pBarcode = (product.barcode || '').trim().toLowerCase();
+        const pSku = (product.sku || '').trim().toLowerCase();
+
+        // Check main product barcode OR SKU
+        if (pBarcode === searchTerm || pSku === searchTerm) {
             matches.push({
                 product,
                 unit: null,
@@ -238,14 +244,17 @@ export function findProductsByBarcode(products: Product[], barcode: string): Bar
                 displayUnit: product.base_unit || 'Cái',
                 price: product.selling_price,
                 stock: product.current_stock,
-                barcode: product.barcode,
+                barcode: product.barcode || product.sku || '',
             });
         }
 
-        // Check unit barcodes
+        // Check unit barcodes OR SKUs
         if (product.units && product.units.length > 0) {
             for (const unit of product.units) {
-                if (unit.barcode === barcode) {
+                const uBarcode = (unit.barcode || '').trim().toLowerCase();
+                const uSku = (unit.sku || '').trim().toLowerCase();
+
+                if (uBarcode === searchTerm || uSku === searchTerm) {
                     // Calculate stock in this unit
                     const stockInUnit = Math.floor(product.current_stock / unit.conversion_rate);
                     matches.push({
@@ -255,7 +264,7 @@ export function findProductsByBarcode(products: Product[], barcode: string): Bar
                         displayUnit: unit.unit_name,
                         price: unit.selling_price || product.selling_price * unit.conversion_rate,
                         stock: stockInUnit,
-                        barcode: unit.barcode,
+                        barcode: unit.barcode || unit.sku || '',
                     });
                 }
             }

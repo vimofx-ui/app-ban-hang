@@ -27,7 +27,7 @@ INSERT INTO roles (name, description, permissions, is_system) VALUES
 ('staff', 'Staff - Basic POS access', '["pos.access", "products.view", "customers.view"]', TRUE)
 ON CONFLICT (name) DO NOTHING;
 
-CREATE TABLE IF NOT EXISTS users (
+CREATE TABLE IF NOT EXISTS user_profiles (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     full_name VARCHAR(255) NOT NULL,
     email VARCHAR(255) UNIQUE,
@@ -91,7 +91,7 @@ CREATE TABLE IF NOT EXISTS products (
     last_sold_at TIMESTAMPTZ,
     total_sold DECIMAL(15,3) DEFAULT 0,
     exclude_from_loyalty_points BOOLEAN DEFAULT FALSE,
-    created_by UUID REFERENCES users(id),
+    created_by UUID REFERENCES user_profiles(id),
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -170,7 +170,7 @@ CREATE TABLE IF NOT EXISTS suppliers (
 
 CREATE TABLE IF NOT EXISTS shifts (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    user_id UUID REFERENCES users(id),
+    user_id UUID REFERENCES user_profiles(id),
     clock_in TIMESTAMPTZ NOT NULL,
     clock_out TIMESTAMPTZ,
     opening_cash DECIMAL(15,2) DEFAULT 0,
@@ -232,9 +232,9 @@ CREATE TABLE IF NOT EXISTS orders (
     notes TEXT,
     provisional_printed BOOLEAN DEFAULT FALSE,
     receipt_printed BOOLEAN DEFAULT FALSE,
-    seller_id UUID REFERENCES users(id),
+    seller_id UUID REFERENCES user_profiles(id),
     seller_name VARCHAR(255),
-    created_by UUID REFERENCES users(id),
+    created_by UUID REFERENCES user_profiles(id),
     completed_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -296,7 +296,7 @@ CREATE TABLE IF NOT EXISTS transactions (
     transaction_date DATE NOT NULL,
     is_accounting BOOLEAN DEFAULT TRUE,
     target_name VARCHAR(255),
-    created_by UUID REFERENCES users(id),
+    created_by UUID REFERENCES user_profiles(id),
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -320,8 +320,8 @@ CREATE TABLE IF NOT EXISTS purchase_orders (
     notes TEXT,
     expected_date DATE,
     received_date DATE,
-    created_by UUID REFERENCES users(id),
-    received_by UUID REFERENCES users(id),
+    created_by UUID REFERENCES user_profiles(id),
+    received_by UUID REFERENCES user_profiles(id),
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -355,7 +355,7 @@ CREATE TABLE IF NOT EXISTS debt_payments (
     debt_before DECIMAL(15,2) NOT NULL,
     debt_after DECIMAL(15,2) NOT NULL,
     notes TEXT,
-    created_by UUID REFERENCES users(id),
+    created_by UUID REFERENCES user_profiles(id),
     created_by_name VARCHAR(255),
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -370,7 +370,7 @@ CREATE TABLE IF NOT EXISTS point_transactions (
     order_id UUID REFERENCES orders(id),
     points_change INTEGER NOT NULL, -- Positive = earned, Negative = used
     reason TEXT,
-    created_by UUID REFERENCES users(id),
+    created_by UUID REFERENCES user_profiles(id),
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -389,7 +389,7 @@ CREATE TABLE IF NOT EXISTS stock_history (
     reason TEXT,
     reference_type VARCHAR(50), -- 'sale', 'purchase', 'adjustment', 'return'
     reference_id UUID,
-    created_by UUID REFERENCES users(id),
+    created_by UUID REFERENCES user_profiles(id),
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -401,7 +401,7 @@ CREATE INDEX IF NOT EXISTS idx_stock_history_product ON stock_history(product_id
 
 CREATE TABLE IF NOT EXISTS audit_logs (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    user_id UUID REFERENCES users(id),
+    user_id UUID REFERENCES user_profiles(id),
     action_type VARCHAR(50) NOT NULL,
     entity_type VARCHAR(50),
     entity_id UUID,
@@ -434,7 +434,7 @@ CREATE TABLE IF NOT EXISTS reminders (
     is_active BOOLEAN DEFAULT TRUE,
     repeat_interval INTEGER,
     max_repeats INTEGER DEFAULT 1,
-    created_by UUID REFERENCES users(id),
+    created_by UUID REFERENCES user_profiles(id),
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );

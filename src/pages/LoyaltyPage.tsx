@@ -46,8 +46,8 @@ export default function LoyaltyPage() {
 
     return (
         <div className="fixed inset-0 z-50 flex bg-slate-100">
-            {/* Sidebar - Green Theme */}
-            <div className="w-56 bg-gradient-to-b from-green-700 to-green-800 text-white flex flex-col shadow-xl">
+            {/* Sidebar - Green Theme (Desktop) */}
+            <div className="hidden md:flex w-56 bg-gradient-to-b from-green-700 to-green-800 text-white flex-col shadow-xl">
                 {/* Header with Back Button */}
                 <div className="p-4 border-b border-green-600">
                     <button
@@ -82,9 +82,43 @@ export default function LoyaltyPage() {
             </div>
 
             {/* Main Content */}
-            <div className="flex-1 min-w-0 overflow-auto bg-slate-100">
-                <div className="p-6 min-w-[600px]">
-                    <h2 className="text-2xl font-bold text-slate-800 mb-6">
+            <div className="flex-1 min-w-0 overflow-auto bg-slate-100 flex flex-col">
+                {/* Mobile Header & Tabs */}
+                <div className="md:hidden bg-gradient-to-r from-green-700 to-green-800 text-white shadow-md sticky top-0 z-10">
+                    <div className="p-4 flex items-center justify-between border-b border-green-600">
+                        <h1 className="text-lg font-bold flex items-center gap-2">
+                            <span>⭐</span>
+                            <span>Loyalty Program</span>
+                        </h1>
+                        <button
+                            onClick={() => navigate(-1)}
+                            className="bg-white/20 p-2 rounded-full hover:bg-white/30 transition-colors"
+                        >
+                            ✕
+                        </button>
+                    </div>
+                    {/* Mobile Horizontal Tabs */}
+                    <div className="flex overflow-x-auto hide-scrollbar">
+                        {TABS.map((tab) => (
+                            <button
+                                key={tab.id}
+                                onClick={() => setActiveTab(tab.id)}
+                                className={cn(
+                                    "flex-none px-4 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap",
+                                    activeTab === tab.id
+                                        ? "border-white text-white bg-white/10"
+                                        : "border-transparent text-green-100 hover:text-white"
+                                )}
+                            >
+                                <span className="mr-2">{tab.icon}</span>
+                                {tab.label}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+
+                <div className="p-4 md:p-6">
+                    <h2 className="text-xl md:text-2xl font-bold text-slate-800 mb-4 md:mb-6 hidden md:block">
                         {TABS.find(t => t.id === activeTab)?.label}
                     </h2>
 
@@ -151,16 +185,16 @@ function OverviewTab() {
 
             {/* Stats Cards */}
             <div className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">TOÀN THỜI GIAN</div>
-            <div className="grid grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 <StatCard
                     icon="👥"
-                    label="Tổng số thành viên"
+                    label="Thành viên"
                     value={totalMembers.toLocaleString()}
                     color="blue"
                 />
                 <StatCard
                     icon="🎯"
-                    label="Tổng điểm hiện có"
+                    label="Điểm hiện có"
                     value={totalPointsBalance.toLocaleString()}
                     color="green"
                 />
@@ -172,14 +206,14 @@ function OverviewTab() {
                 />
                 <StatCard
                     icon="📈"
-                    label="Tỷ lệ đổi thưởng"
+                    label="Đổi thưởng"
                     value={`${stats.redemptionRate.toFixed(0)}%`}
                     color="purple"
                 />
             </div>
 
             {/* Charts Row */}
-            <div className="grid grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 {/* New Members Chart */}
                 <div className="bg-white rounded-xl p-4 shadow-sm border">
                     <div className="mb-4">
@@ -220,7 +254,7 @@ function OverviewTab() {
             </div>
 
             {/* Top Customers Tables */}
-            <div className="grid grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 {/* Top by Points */}
                 <div className="bg-white rounded-xl p-4 shadow-sm border">
                     <div className="flex justify-between items-center mb-4">
@@ -434,7 +468,42 @@ function MembersTab() {
             </div>
 
             {/* Table */}
-            <table className="w-full text-sm">
+            <div className="md:hidden p-4 space-y-4">
+                {filteredCustomers.map((c) => {
+                    const tier = getTierForSpent(c.total_spent || 0);
+                    return (
+                        <div key={c.id} className="bg-slate-50 border rounded-lg p-4 space-y-3">
+                            <div className="flex justify-between items-start">
+                                <div>
+                                    <div className="font-bold text-slate-800">{c.name}</div>
+                                    <div className="text-sm text-slate-500">{c.phone || 'No phone'}</div>
+                                </div>
+                                <span
+                                    className="px-2 py-1 rounded-full text-xs font-medium"
+                                    style={{ backgroundColor: tier.color + '20', color: tier.color }}
+                                >
+                                    {tier.icon} {tier.name}
+                                </span>
+                            </div>
+                            <div className="flex justify-between items-center text-sm border-t pt-2 border-slate-200">
+                                <div>
+                                    <span className="text-slate-500">Điểm: </span>
+                                    <span className="font-bold text-green-600">{c.points_balance.toLocaleString()}</span>
+                                </div>
+                                <div>
+                                    <span className="text-slate-500">Chi tiêu: </span>
+                                    <span className="font-medium">{formatVND(c.total_spent || 0)}</span>
+                                </div>
+                            </div>
+                        </div>
+                    );
+                })}
+                {filteredCustomers.length === 0 && (
+                    <div className="text-center text-slate-400 py-4">Không tìm thấy khách hàng</div>
+                )}
+            </div>
+
+            <table className="hidden md:table w-full text-sm">
                 <thead className="bg-slate-50">
                     <tr>
                         <th className="text-left p-3">Khách hàng</th>
@@ -645,7 +714,7 @@ function TiersTab() {
                 Click vào mỗi hạng để xem danh sách thành viên.
             </p>
 
-            <div className="grid grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 {tiers.map((tier) => (
                     <button
                         key={tier.id}
@@ -803,7 +872,46 @@ function ActivityTab() {
             </div>
 
             {/* Table */}
-            <table className="w-full text-sm">
+            <div className="md:hidden divide-y divide-slate-100">
+                {filteredTxs.map((tx) => (
+                    <div key={tx.id} className="p-4 space-y-2">
+                        <div className="flex justify-between items-start">
+                            <span className={cn(
+                                "px-2 py-0.5 rounded text-xs font-medium",
+                                tx.type === 'earn' && "bg-green-100 text-green-700",
+                                tx.type === 'redeem' && "bg-red-100 text-red-700",
+                                tx.type === 'adjust' && "bg-blue-100 text-blue-700",
+                            )}>
+                                {tx.type === 'earn' && 'Tích điểm'}
+                                {tx.type === 'redeem' && 'Đổi điểm'}
+                                {tx.type === 'adjust' && 'Điều chỉnh'}
+                            </span>
+                            <span className="text-xs text-slate-500">
+                                {new Date(tx.created_at).toLocaleString('vi-VN')}
+                            </span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                            <div className="font-medium text-slate-700">{tx.customer_name || tx.customer_id}</div>
+                            <div className={cn(
+                                "font-bold",
+                                tx.points > 0 ? "text-green-600" : "text-red-600"
+                            )}>
+                                {tx.points > 0 ? '+' : ''}{tx.points.toLocaleString()}
+                            </div>
+                        </div>
+                        {tx.reason && (
+                            <div className="text-xs text-slate-500 bg-slate-50 p-2 rounded">
+                                {tx.reason}
+                            </div>
+                        )}
+                    </div>
+                ))}
+                {filteredTxs.length === 0 && (
+                    <div className="text-center py-8 text-slate-400">Chưa có hoạt động nào</div>
+                )}
+            </div>
+
+            <table className="hidden md:table w-full text-sm">
                 <thead className="bg-slate-50">
                     <tr>
                         <th className="text-left p-3">Thời gian</th>
@@ -904,7 +1012,7 @@ function ConfigTab() {
             {/* Store Info */}
             <div className="bg-white rounded-xl shadow-sm border p-6">
                 <h3 className="font-bold text-lg mb-4">Thông tin cửa hàng</h3>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                         <label className="block text-sm font-medium text-slate-700 mb-1">Tên cửa hàng</label>
                         <input
@@ -951,7 +1059,7 @@ function ConfigTab() {
                     </label>
 
                     {loyalty.enabled && (
-                        <div className="grid grid-cols-2 gap-4 pl-8 pt-2">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pl-0 md:pl-8 pt-2">
                             <div>
                                 <label className="block text-sm font-medium text-slate-700 mb-1">
                                     Chi tiêu bao nhiêu để được 1 điểm

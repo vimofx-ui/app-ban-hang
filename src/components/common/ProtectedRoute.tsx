@@ -14,11 +14,11 @@ interface ProtectedRouteProps {
 }
 
 export function ProtectedRoute({ requiredPermission, requireAdmin }: ProtectedRouteProps) {
-    const { user: authUser, loading } = useAuthStore();
+    const { user: authUser, isLoading } = useAuthStore();
     const { hasPermission, users } = useUserStore();
     const location = useLocation();
 
-    if (loading) {
+    if (isLoading) {
         return <div className="flex items-center justify-center min-h-screen">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-600"></div>
         </div>;
@@ -26,7 +26,7 @@ export function ProtectedRoute({ requiredPermission, requireAdmin }: ProtectedRo
 
     // 1. Check if authenticated via authStore
     if (!authUser) {
-        return <Navigate to="/login" state={{ from: location }} replace />;
+        return <Navigate to="/dang-nhap" state={{ from: location }} replace />;
     }
 
     // 2. Check admin/owner requirement

@@ -32,50 +32,90 @@ export function OrderStats({ orders }: OrderStatsProps) {
         },
 
         completed_today: {
-            count: 0, // Need to filter by date if strictly following dashboard
-            // Simply showing all completed for now or filtered logic
+            count: 0,
         }
     };
 
     return (
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
-            <div className="bg-white p-4 rounded-xl border shadow-sm col-span-1">
-                <div className="text-gray-500 text-xs uppercase font-bold mb-1">Chờ duyệt</div>
-                <div className="text-2xl font-bold text-blue-600">{stats.pending_approval}</div>
-                <div className="text-xs text-gray-400 mt-1">đơn hàng</div>
+        <>
+            {/* Mobile: Horizontal Scroll */}
+            <div className="md:hidden overflow-x-auto -mx-4 px-4 pb-2 scrollbar-hide">
+                <div className="flex gap-2 min-w-min">
+                    <div className="bg-white p-3 rounded-xl border shadow-sm min-w-[100px] flex-shrink-0">
+                        <div className="text-gray-500 text-[10px] uppercase font-bold mb-1">Chờ duyệt</div>
+                        <div className="text-xl font-bold text-blue-600">{stats.pending_approval}</div>
+                        <div className="text-[10px] text-gray-400">đơn hàng</div>
+                    </div>
+
+                    <div className="bg-white p-3 rounded-xl border shadow-sm min-w-[100px] flex-shrink-0">
+                        <div className="text-gray-500 text-[10px] uppercase font-bold mb-1">Chờ TT</div>
+                        <div className="text-xl font-bold text-red-600">{stats.waiting_payment.count}</div>
+                        <div className="text-[10px] text-gray-600 font-medium">{formatVND(stats.waiting_payment.amount)}</div>
+                    </div>
+
+                    <div className="bg-white p-3 rounded-xl border shadow-sm min-w-[100px] flex-shrink-0">
+                        <div className="text-gray-500 text-[10px] uppercase font-bold mb-1">Chờ gói</div>
+                        <div className="text-xl font-bold text-orange-600">{stats.waiting_packing.count}</div>
+                        <div className="text-[10px] text-gray-600 font-medium">{formatVND(stats.waiting_packing.amount)}</div>
+                    </div>
+
+                    <div className="bg-white p-3 rounded-xl border shadow-sm min-w-[100px] flex-shrink-0">
+                        <div className="text-gray-500 text-[10px] uppercase font-bold mb-1">Chờ lấy</div>
+                        <div className="text-xl font-bold text-yellow-600">{stats.waiting_ship.count}</div>
+                        <div className="text-[10px] text-gray-600 font-medium">{formatVND(stats.waiting_ship.amount)}</div>
+                    </div>
+
+                    <div className="bg-white p-3 rounded-xl border shadow-sm min-w-[100px] flex-shrink-0">
+                        <div className="text-gray-500 text-[10px] uppercase font-bold mb-1">Đang giao</div>
+                        <div className="text-xl font-bold text-purple-600">{stats.shipping.count}</div>
+                        <div className="text-[10px] text-gray-600 font-medium">{formatVND(stats.shipping.amount)}</div>
+                    </div>
+                </div>
             </div>
 
-            <div className="bg-white p-4 rounded-xl border shadow-sm col-span-1">
-                <div className="text-gray-500 text-xs uppercase font-bold mb-1">Chờ thanh toán</div>
-                <div className="flex items-baseline gap-2">
-                    <span className="text-2xl font-bold text-red-600">{stats.waiting_payment.count}</span>
+            {/* Desktop: Grid 5 columns */}
+            <div className="hidden md:grid grid-cols-5 gap-4 mb-6">
+                <div className="bg-white p-4 rounded-xl border shadow-sm flex flex-col justify-between">
+                    <div>
+                        <div className="text-gray-500 text-xs uppercase font-bold mb-0.5">Chờ duyệt</div>
+                        <div className="text-2xl font-bold text-blue-600">{stats.pending_approval}</div>
+                    </div>
+                    <div className="text-xs text-gray-400 mt-0.5">đơn hàng</div>
                 </div>
-                <div className="text-sm font-medium text-gray-700 mt-1">{formatVND(stats.waiting_payment.amount)}</div>
-            </div>
 
-            <div className="bg-white p-4 rounded-xl border shadow-sm col-span-1">
-                <div className="text-gray-500 text-xs uppercase font-bold mb-1">Chờ đóng gói</div>
-                <div className="flex items-baseline gap-2">
-                    <span className="text-2xl font-bold text-orange-600">{stats.waiting_packing.count}</span>
+                <div className="bg-white p-4 rounded-xl border shadow-sm flex flex-col justify-between">
+                    <div>
+                        <div className="text-gray-500 text-xs uppercase font-bold mb-0.5">Chờ thanh toán</div>
+                        <div className="text-2xl font-bold text-red-600">{stats.waiting_payment.count}</div>
+                    </div>
+                    <div className="text-sm font-medium text-gray-700 mt-0.5">{formatVND(stats.waiting_payment.amount)}</div>
                 </div>
-                <div className="text-sm font-medium text-gray-700 mt-1">{formatVND(stats.waiting_packing.amount)}</div>
-            </div>
 
-            <div className="bg-white p-4 rounded-xl border shadow-sm col-span-1">
-                <div className="text-gray-500 text-xs uppercase font-bold mb-1">Chờ lấy hàng</div>
-                <div className="flex items-baseline gap-2">
-                    <span className="text-2xl font-bold text-yellow-600">{stats.waiting_ship.count}</span>
+                <div className="bg-white p-4 rounded-xl border shadow-sm flex flex-col justify-between">
+                    <div>
+                        <div className="text-gray-500 text-xs uppercase font-bold mb-0.5">Chờ đóng gói</div>
+                        <div className="text-2xl font-bold text-orange-600">{stats.waiting_packing.count}</div>
+                    </div>
+                    <div className="text-sm font-medium text-gray-700 mt-0.5">{formatVND(stats.waiting_packing.amount)}</div>
                 </div>
-                <div className="text-sm font-medium text-gray-700 mt-1">{formatVND(stats.waiting_ship.amount)}</div>
-            </div>
 
-            <div className="bg-white p-4 rounded-xl border shadow-sm col-span-1">
-                <div className="text-gray-500 text-xs uppercase font-bold mb-1">Đang giao hàng</div>
-                <div className="flex items-baseline gap-2">
-                    <span className="text-2xl font-bold text-purple-600">{stats.shipping.count}</span>
+                <div className="bg-white p-4 rounded-xl border shadow-sm flex flex-col justify-between">
+                    <div>
+                        <div className="text-gray-500 text-xs uppercase font-bold mb-0.5">Chờ lấy</div>
+                        <div className="text-2xl font-bold text-yellow-600">{stats.waiting_ship.count}</div>
+                    </div>
+                    <div className="text-sm font-medium text-gray-700 mt-0.5">{formatVND(stats.waiting_ship.amount)}</div>
                 </div>
-                <div className="text-sm font-medium text-gray-700 mt-1">{formatVND(stats.shipping.amount)}</div>
+
+                <div className="bg-white p-4 rounded-xl border shadow-sm flex flex-col justify-between">
+                    <div>
+                        <div className="text-gray-500 text-xs uppercase font-bold mb-0.5">Đang giao</div>
+                        <div className="text-2xl font-bold text-purple-600">{stats.shipping.count}</div>
+                    </div>
+                    <div className="text-sm font-medium text-gray-700 mt-0.5">{formatVND(stats.shipping.amount)}</div>
+                </div>
             </div>
-        </div>
+        </>
     );
 }
+

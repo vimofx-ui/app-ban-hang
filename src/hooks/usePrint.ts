@@ -142,7 +142,7 @@ export function usePrint() {
                 totalAmount: order.total_amount,
                 paidAmount: order.paid_amount || 0,
                 debtAmount: (order.total_amount - (order.paid_amount || 0)),
-                createdBy: order.assigned_to || 'Admin',
+                createdBy: (order as any).assigned_to || 'Admin',
                 storeName: printSettings.storeName || receipt.storeName,
                 storeAddress: printSettings.storeAddress || receipt.storeAddress,
             },

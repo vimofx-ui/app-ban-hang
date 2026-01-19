@@ -1,186 +1,90 @@
-// =============================================================================
-// BRAND UTILITIES - Subdomain-based Multi-Tenant Brand Detection
-// =============================================================================
+import { supabase } from '@/lib/supabase';
+import type { Brand } from '@/stores/brandStore';
 
-import { supabase, isSupabaseConfigured } from '@/lib/supabase';
+export type BrandInfo = Brand;
 
-// =============================================================================
-// TYPES
-// =============================================================================
-
-export interface BrandInfo {
-    id: string;
-    name: string;
-    slug: string;
-    logo_url?: string;
-    primary_color?: string;
-}
-
-// =============================================================================
-// SUBDOMAIN DETECTION
-// =============================================================================
-
-/**
- * Extract brand slug from current hostname
- * Examples:
- *   - "abc.storelypos.com" → "abc"
- *   - "demo.localhost" → "demo"
- *   - "localhost" → null (main app)
- *   - "storelypos.com" → null (main app)
- */
 export function getBrandSlug(): string | null {
-    const hostname = window.location.hostname;
+    const host = window.location.hostname;
 
-    // Local development: check for subdomain.localhost pattern
-    if (hostname.includes('localhost')) {
-        const parts = hostname.split('.');
-        // "demo.localhost" → ["demo", "localhost"]
-        if (parts.length >= 2 && parts[parts.length - 1] === 'localhost') {
-            return parts[0];
-        }
-        return null; // Plain "localhost"
+    // Localhost handling for development
+    if (host.includes('localhost') || host.includes('127.0.0.1')) {
+        // Try getting from local storage or query param for testing
+        const params = new URLSearchParams(window.location.search);
+        const brandParam = params.get('brand');
+        if (brandParam) return brandParam;
+
+        // Default to null (or specific fallback if configured)
+        return localStorage.getItem('dev_brand_slug');
     }
 
-    // Production: check for subdomain.domain.tld pattern
-    const parts = hostname.split('.');
-    if (parts.length >= 3) {
-        // "abc.storelypos.com" → ["abc", "storelypos", "com"]
-        // "www.storelypos.com" → should NOT be treated as brand
-        const subdomain = parts[0].toLowerCase();
-        if (subdomain !== 'www' && subdomain !== 'app') {
-            return subdomain;
-        }
-    }
+    const parts = host.split('.');
 
-    return null;
+    // Standard domain: brand.bangopos.com -> parts length >= 3
+    if (parts.length < 3) return null; // Root domain
+
+    return parts[0];
 }
 
-/**
- * Get the base domain without subdomain
- * Used for redirecting to main app or creating brand URLs
- */
-export function getBaseDomain(): string {
-    const hostname = window.location.hostname;
-
-    if (hostname.includes('localhost')) {
-        return 'localhost';
-    }
-
-    const parts = hostname.split('.');
-    if (parts.length >= 2) {
-        // Return last 2 parts (domain.tld)
-        return parts.slice(-2).join('.');
-    }
-
-    return hostname;
+export function isSuperAdminDomain(): boolean {
+    const slug = getBrandSlug();
+    return slug === 'admin';
 }
 
-/**
- * Build URL for a specific brand
- */
-export function buildBrandUrl(brandSlug: string): string {
-    const baseDomain = getBaseDomain();
+export function getAppUrl(subdomain: string): string {
     const protocol = window.location.protocol;
-    const port = window.location.port;
+    const host = window.location.host;
+    const parts = host.split('.');
 
-    if (baseDomain === 'localhost') {
-        return `${protocol}//${brandSlug}.localhost${port ? ':' + port : ''}`;
+    if (host.includes('localhost')) {
+        return `${protocol}//${host}?brand=${subdomain}`;
     }
 
-    return `${protocol}//${brandSlug}.${baseDomain}`;
+    // Replace subdomain or add if missing
+    if (parts.length >= 3) {
+        parts[0] = subdomain;
+        return `${protocol}//${parts.join('.')}`;
+    }
+
+    return `${protocol}//${subdomain}.${host}`;
 }
 
-// =============================================================================
-// BRAND DATA FETCHING
-// =============================================================================
-
-/**
- * Fetch brand info by slug from Supabase
- */
-export async function getBrandBySlug(slug: string): Promise<BrandInfo | null> {
-    if (!isSupabaseConfigured()) {
-        console.warn('Supabase not configured');
+export const getBrandBySlug = async (slug: string): Promise<BrandInfo | null> => {
+    if (!supabase) return null;
+    try {
+        const { data, error } = await supabase.from('brands').select('*').eq('slug', slug).maybeSingle();
+        if (error) {
+            console.warn('Error fetching brand by slug:', error);
+            return null;
+        }
+        return data as BrandInfo;
+    } catch (e) {
+        console.error(e);
         return null;
     }
+};
 
+export const validateUserBrandAccess = async (userId: string, slug: string): Promise<boolean> => {
+    if (!supabase) return false;
+    // Check if user has profile linked to this brand or is owner
+    // This logic depends on schema. Assuming user_profiles has brand_id.
+    const { data } = await supabase.from('user_profiles').select('brand_id, role').eq('id', userId).single();
+    if (!data) return false;
+
+    // Also fetch brand id
+    const brand = await getBrandBySlug(slug);
+    if (!brand) return false;
+
+    // Check permissions
+    // If Admin/SuperAdmin, allow?
+    if (data.role === 'admin' && slug === 'admin') return true;
+
+    return data.brand_id === brand.id;
+};
+
+export const storeBrandInfo = (brand: BrandInfo) => {
     try {
-        const { data, error } = await supabase
-            .from('brands')
-            .select('id, name, slug, logo_url, primary_color')
-            .eq('slug', slug)
-            .eq('is_active', true)
-            .maybeSingle();
-
-        if (error) throw error;
-        return data as BrandInfo | null;
-    } catch (err) {
-        console.error('Failed to fetch brand by slug:', err);
-        return null;
+        localStorage.setItem('current_brand_info', JSON.stringify(brand));
+    } catch (e) {
+        // Ignore storage errors
     }
-}
-
-/**
- * Check if current subdomain matches user's brand
- */
-export async function validateUserBrandAccess(
-    userId: string,
-    brandSlug: string
-): Promise<boolean> {
-    if (!isSupabaseConfigured()) return false;
-
-    try {
-        const { data, error } = await supabase
-            .from('user_profiles')
-            .select('brand_id, brands!inner(slug)')
-            .eq('id', userId)
-            .single();
-
-        if (error) throw error;
-
-        // @ts-ignore - brands is joined
-        return data?.brands?.slug === brandSlug;
-    } catch (err) {
-        console.error('Failed to validate user brand access:', err);
-        return false;
-    }
-}
-
-// =============================================================================
-// BRAND CONTEXT STORAGE
-// =============================================================================
-
-const BRAND_STORAGE_KEY = 'storely_current_brand';
-
-/**
- * Store current brand info in localStorage
- */
-export function storeBrandInfo(brand: BrandInfo): void {
-    try {
-        localStorage.setItem(BRAND_STORAGE_KEY, JSON.stringify(brand));
-    } catch (err) {
-        console.warn('Failed to store brand info:', err);
-    }
-}
-
-/**
- * Get stored brand info from localStorage
- */
-export function getStoredBrandInfo(): BrandInfo | null {
-    try {
-        const stored = localStorage.getItem(BRAND_STORAGE_KEY);
-        return stored ? JSON.parse(stored) : null;
-    } catch (err) {
-        return null;
-    }
-}
-
-/**
- * Clear stored brand info
- */
-export function clearStoredBrandInfo(): void {
-    try {
-        localStorage.removeItem(BRAND_STORAGE_KEY);
-    } catch (err) {
-        console.warn('Failed to clear brand info:', err);
-    }
-}
+};
