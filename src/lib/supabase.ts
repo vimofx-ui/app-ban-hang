@@ -26,6 +26,8 @@ if (supabaseUrl && supabaseAnonKey) {
         },
     });
 } else {
+    console.error('❌ CRITICAL ERROR: Supabase credentials missing!');
+    console.error('👉 Please check your Cloudflare Environment Variables: VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY');
     console.warn('⚠️ Supabase credentials not found. Running in demo mode.');
     // Create a placeholder client with dummy values (will fail at runtime if used)
     supabaseInstance = createClient('https://placeholder.supabase.co', 'placeholder-key', {

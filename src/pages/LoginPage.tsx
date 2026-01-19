@@ -24,8 +24,30 @@ export function LoginPage() {
         }
     };
 
+    // --- DIAGNOSTICS ---
+    const debugSupabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+    const [testResult, setTestResult] = useState<string | null>(null);
 
-
+    const testConnection = async () => {
+        setTestResult('Đang kiểm tra kết nối...');
+        try {
+            if (!debugSupabaseUrl) {
+                setTestResult('LỖI: Không có URL Supabase');
+                return;
+            }
+            const res = await fetch(`${debugSupabaseUrl}/rest/v1/`, {
+                headers: { 'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY || '' }
+            });
+            if (res.ok) {
+                setTestResult(`✅ Kết nối OK! Status: ${res.status}`);
+            } else {
+                setTestResult(`❌ Lỗi HTTP: ${res.status} ${res.statusText}`);
+            }
+        } catch (err: any) {
+            setTestResult(`❌ Lỗi Mạng: ${err.message || err}`);
+        }
+    };
+    // -------------------
     return (
         <div style={{
             minHeight: '100vh',
@@ -57,6 +79,28 @@ export function LoginPage() {
                     <h1 style={{ fontSize: '24px', fontWeight: 'bold', color: '#111827', margin: 0 }}>Bango Pos</h1>
                     <p style={{ color: '#6B7280', marginTop: '4px' }}>Đăng nhập để tiếp tục</p>
                 </div>
+
+                {/* --- DEBUG: CONFIGURATION CHECK --- */}
+                {(!import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY) && (
+                    <div style={{
+                        marginBottom: '24px',
+                        padding: '16px',
+                        backgroundColor: '#FEF2F2',
+                        border: '2px solid #EF4444',
+                        borderRadius: '12px',
+                        color: '#B91C1C',
+                        fontSize: '14px',
+                        textAlign: 'left'
+                    }}>
+                        <div style={{ fontWeight: 'bold', marginBottom: '8px', fontSize: '16px' }}>⚠️ Lỗi Cấu Hình Hệ Thống</div>
+                        <p style={{ margin: '0 0 8px 0' }}>Không tìm thấy thông tin kết nối Database. Vui lòng kiểm tra <strong>Variable Name</strong> trên Cloudflare:</p>
+                        <ul style={{ paddingLeft: '20px', margin: 0 }}>
+                            <li><code>VITE_SUPABASE_URL</code>: {import.meta.env.VITE_SUPABASE_URL ? '✅ Đã có' : '❌ Thiếu'}</li>
+                            <li><code>VITE_SUPABASE_ANON_KEY</code>: {import.meta.env.VITE_SUPABASE_ANON_KEY ? '✅ Đã có' : '❌ Thiếu'}</li>
+                        </ul>
+                    </div>
+                )}
+                {/* ---------------------------------- */}
 
                 {/* Login Card */}
                 <div style={{
@@ -192,8 +236,33 @@ export function LoginPage() {
 
 
                 </div>
+
+                {/* --- DIAGNOSTICS UI (v1.2) --- */}
+                <div style={{ marginTop: '30px', borderTop: '1px dashed #e5e7eb', paddingTop: '20px' }}>
+                    <p style={{ fontSize: '12px', color: '#9ca3af', marginBottom: '8px', textAlign: 'center' }}>
+                        Debug Info (v1.2)
+                    </p>
+                    <div style={{ fontSize: '12px', fontFamily: 'monospace', color: '#6b7280', background: '#f9fafb', padding: '10px', borderRadius: '8px' }}>
+                        <div><strong>URL:</strong> {debugSupabaseUrl ? debugSupabaseUrl.replace(/^(https?:\/\/[^.]+).+/, '$1...') : '(Trống)'}</div>
+                        <div style={{ marginTop: '8px' }}>
+                            <button
+                                type="button"
+                                onClick={testConnection}
+                                style={{ background: '#3b82f6', color: 'white', border: 'none', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer' }}
+                            >
+                                Kiểm tra kết nối Server
+                            </button>
+                        </div>
+                        {testResult && (
+                            <div style={{ marginTop: '8px', fontWeight: 'bold', color: testResult.startsWith('✅') ? 'green' : 'red' }}>
+                                {testResult}
+                            </div>
+                        )}
+                    </div>
+                </div>
             </div>
         </div>
+
     );
 }
 
