@@ -16,6 +16,21 @@ interface OrderState extends BaseState {
     shipOrder: (orderId: string) => Promise<boolean>;
     finalizeDeliveryOrder: (orderId: string) => Promise<boolean>;
     processReturn: (originalOrder: Order, itemsToReturn: { itemId: string; quantity: number }[], reason: string) => Promise<boolean>;
+    subscribeToOrders: () => void;
+    unsubscribeOrders: () => void;
+
+    // Pagination
+    totalOrders: number;
+    currentPage: number;
+    pageSize: number;
+    setCurrentPage: (page: number) => void;
+    setPageSize: (size: number) => void;
+
+    // Server-side Filtering
+    activeStatus: string;
+    searchQuery: string;
+    setActiveStatus: (status: string) => void;
+    setSearchQuery: (query: string) => void;
 }
 
 // Helper: Remove images to save space
@@ -34,14 +49,32 @@ const cleanOrderForStorage = (order: Order): Order => ({
 export const useOrderStore = create<OrderState>((set, get) => ({
     ...createBaseState(),
     orders: [],
+    // Pagination Defaults
+    totalOrders: 0,
+    currentPage: 1,
+    pageSize: 20,
+    activeStatus: 'all',
+    searchQuery: '',
+
+    setCurrentPage: (page: number) => set({ currentPage: page }),
+    setPageSize: (size: number) => set({ pageSize: size }),
+    setActiveStatus: (status: string) => set({ activeStatus: status, currentPage: 1 }), // Reset to page 1 on filter change
+    setSearchQuery: (query: string) => set({ searchQuery: query, currentPage: 1 }),
 
     loadOrders: async () => {
         await withAsync(set, async () => {
             let data: any[] = [];
             let error = null;
+            let count = 0;
+
+            const { currentPage, pageSize, activeStatus, searchQuery } = get();
+            const from = (currentPage - 1) * pageSize;
+            const to = from + pageSize - 1;
 
             if (supabase) {
-                const { branchId } = await import('./authStore').then(m => m.useAuthStore.getState());
+                // Dynamically import or...
+                const authStoreModule = await import('./authStore');
+                const branchId = authStoreModule.useAuthStore.getState().branchId;
 
                 let query = supabase
                     .from('orders')
@@ -49,33 +82,53 @@ export const useOrderStore = create<OrderState>((set, get) => ({
                         *,
                         order_items (*, product:products(*)),
                         customer:customers(*)
-                    `)
-                    .order('created_at', { ascending: false });
+                    `, { count: 'exact' })
+                    .order('created_at', { ascending: false })
+                    .range(from, to);
 
                 if (branchId) {
                     query = query.eq('branch_id', branchId);
                 }
 
-                const res = await query;
+                // Apply Filters Server-side
+                if (activeStatus && activeStatus !== 'all') {
+                    query = query.eq('status', activeStatus);
+                }
 
+                if (searchQuery) {
+                    // Search by order_number or customer name (requires join filter or simple check)
+                    // Supabase simple search:
+                    // query = query.or(`order_number.ilike.%${searchQuery}%,customer.name.ilike.%${searchQuery}%`); // This might fail on joined cols
+                    // Safer: just order_number for now, or use a specific RPC if complex text search needed.
+                    // Let's try order_number first.
+                    query = query.ilike('order_number', `%${searchQuery}%`);
+                }
+
+                const res = await query;
                 data = res.data || [];
                 error = res.error;
+                count = res.count || 0;
             }
 
             if (!error) {
-                // Merge with offline orders if any
-                const offlineOrders = JSON.parse(localStorage.getItem('offline-orders') || '[]');
+                // Merge with offline orders if any (Logic slightly complicated with pagination, 
+                // but usually offline orders are "new" so they should appear on page 1 if sorted by date)
+                // For simplicity, we prioritize server data for pagination consistency.
+                // However, offline orders should be visible. 
+                // Strategy: If page 1, prepend offline orders. 
 
-                // Create Set of IDs from Supabase data for efficient lookup
-                const existingIds = new Set(data.map((o: any) => o.id));
+                let allOrders = [...data];
 
-                // Only include offline orders that are NOT in Supabase data
-                const uniqueOfflineOrders = offlineOrders.filter((o: any) => !existingIds.has(o.id));
+                if (currentPage === 1) {
+                    const offlineOrders = JSON.parse(localStorage.getItem('offline-orders') || '[]');
+                    const existingIds = new Set(data.map((o: any) => o.id));
+                    const uniqueOfflineOrders = offlineOrders.filter((o: any) => !existingIds.has(o.id));
+                    allOrders = [...uniqueOfflineOrders, ...data].sort((a, b) =>
+                        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+                    );
+                }
 
-                const allOrders = [...uniqueOfflineOrders, ...data].sort((a, b) =>
-                    new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-                );
-                set({ orders: allOrders as Order[] });
+                set({ orders: allOrders as Order[], totalOrders: count });
             } else if (error) {
                 throw error;
             }
@@ -110,8 +163,8 @@ export const useOrderStore = create<OrderState>((set, get) => ({
                 .from('orders')
                 .select(`
                     *,
-                    order_items (*, product:products(*)),
-                    customer:customers(*)
+                    order_items (*, product: products(*)),
+            customer: customers(*)
                 `)
                 .eq('id', id)
                 .single();
@@ -237,7 +290,7 @@ export const useOrderStore = create<OrderState>((set, get) => ({
                     await useProductStore.getState().updateStock(
                         item.product_id,
                         -item.quantity,
-                        `Xuất kho giao hàng - ${order.order_number}`,
+                        `Xuất kho giao hàng - ${order.order_number} `,
                         'sale'
                     );
                 }
@@ -337,7 +390,7 @@ export const useOrderStore = create<OrderState>((set, get) => ({
             const { useShiftStore } = await import('./shiftStore');
             const { useProductStore } = await import('./productStore');
             const { generateId } = await import('@/lib/utils');
-            const returnOrderNumber = `RT${originalOrder.order_number.replace('ORD-', '').replace('HD', '')}`;
+            const returnOrderNumber = `RT${originalOrder.order_number.replace('ORD-', '').replace('HD', '')} `;
             const now = new Date().toISOString();
             const currentShift = useShiftStore.getState().currentShift;
             let totalRefund = 0;
@@ -426,7 +479,7 @@ export const useOrderStore = create<OrderState>((set, get) => ({
                 await useProductStore.getState().updateStock(
                     originalItem.product_id,
                     quantity, // Positive = add back to stock
-                    `Trả hàng - ${returnOrderNumber}`,
+                    `Trả hàng - ${returnOrderNumber} `,
                     'return'
                 );
             }
@@ -463,29 +516,95 @@ export const useOrderStore = create<OrderState>((set, get) => ({
         } finally {
             set({ isLoading: false });
         }
+    },
+
+    subscribeToOrders: async () => {
+        const authStoreModule = await import('./authStore');
+        const branchId = authStoreModule.useAuthStore.getState().branchId;
+        if (!supabase || !branchId) return;
+
+        // Unsubscribe existing if any
+        if (get().unsubscribeOrders) get().unsubscribeOrders();
+
+        console.log('📡 Subscribing to orders for branch:', branchId);
+        const channel = supabase
+            .channel('orders-list-realtime')
+            .on(
+                'postgres_changes',
+                {
+                    event: '*',
+                    schema: 'public',
+                    table: 'orders',
+                    filter: `branch_id = eq.${branchId} `
+                },
+                async (payload) => {
+                    console.log('🔔 Realtime order update:', payload.eventType);
+                    const { eventType, new: newRecord, old: oldRecord } = payload;
+
+                    if (eventType === 'INSERT') {
+                        // Fetch the full order details including relations
+                        const { data, error } = await supabase
+                            .from('orders')
+                            .select(`
+            *,
+            order_items(*, product: products(*)),
+            customer: customers(*)
+                `)
+                            .eq('id', (newRecord as any).id)
+                            .single();
+
+                        if (data && !error) {
+                            set(state => ({
+                                orders: [data as Order, ...state.orders]
+                            }));
+                        }
+                    } else if (eventType === 'UPDATE') {
+                        // Ideally we fetch full details again to be safe with relations, 
+                        // or we just update the fields we know.
+                        // For now, let's just shallow update the order fields in the list
+                        // and re-fetch if status changed to 'completed' or something critical?
+                        // Simplest safety: fetch the single updated order.
+                        const { data, error } = await supabase
+                            .from('orders')
+                            .select(`
+                *,
+                order_items(*, product: products(*)),
+                customer: customers(*)
+                    `)
+                            .eq('id', (newRecord as any).id)
+                            .single();
+
+                        if (data && !error) {
+                            set(state => ({
+                                orders: state.orders.map(o => o.id === data.id ? data as Order : o)
+                            }));
+                        }
+                    } else if (eventType === 'DELETE') {
+                        set(state => ({
+                            orders: state.orders.filter(o => o.id !== (oldRecord as any).id)
+                        }));
+                    }
+                }
+            )
+            .subscribe();
+
+        // Check helper to store channel reference? 
+        // Actually zustand store actions are functions. 
+        // We need a place to store the channel. 
+        // Let's rely on a module-level variable OR add it to state (but state should be serializable).
+        // Module level is fine for singleton store.
+        (get() as any)._channel = channel;
+    },
+
+    unsubscribeOrders: () => {
+        const channel = (get() as any)._channel;
+        if (channel) {
+            console.log('🔇 Unsubscribing from orders');
+            supabase.removeChannel(channel);
+            (get() as any)._channel = null;
+        }
     }
 }));
 
-export function subscribeOrders(onChange: () => void) {
-    if (!supabase) return;
 
-    const channel = supabase
-        .channel('orders-realtime')
-        .on(
-            'postgres_changes',
-            {
-                event: '*',
-                schema: 'public',
-                table: 'orders',
-            },
-            () => {
-                console.log('🔔 Realtime order update received');
-                onChange();
-            }
-        )
-        .subscribe();
 
-    return () => {
-        supabase.removeChannel(channel);
-    };
-}

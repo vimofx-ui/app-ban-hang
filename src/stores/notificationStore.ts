@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { supabase } from '@/lib/supabase';
 import { requestForToken, onMessageListener } from '@/lib/firebase';
 import { RealtimeChannel } from '@supabase/supabase-js';
+import { useAuthStore } from './authStore';
 
 export interface Notification {
     id: string;
@@ -134,55 +135,69 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
         if (!supabase) return;
 
         // 1. Subscribe to Realtime DB (In-App)
-        const channel = supabase
-            .channel('user-notifications')
-            .on(
-                'postgres_changes',
-                {
-                    event: 'INSERT',
-                    schema: 'public',
-                    table: 'notifications',
-                    // Filter by recipient_id is technically not supported in realtime filters safely without RLS
-                    // But with RLS enabled and 'postgres_changes', user only receives their own rows if configured correctly on server?
-                    // Actually 'postgres_changes' usually broadcasts all matching rows unless RLS is strictly applied to replication
-                    // For now we will filter client side or trust the connection
-                },
-                async (payload) => {
-                    const newNotif = payload.new as Notification;
+        // Get current user first
+        const user = (useAuthStore.getState() as any).user;
+        // Or better:
+        supabase.auth.getUser().then(({ data: { user } }) => {
+            if (!user) return;
 
-                    // Check if it belongs to me (double check)
-                    const { data: { user } } = await supabase.auth.getUser();
-                    // payload.new might not have all fields if RLS masks them, but INSERT usually has them
+            const channel = supabase
+                .channel('user-notifications')
+                .on(
+                    'postgres_changes',
+                    {
+                        event: 'INSERT',
+                        schema: 'public',
+                        table: 'notifications',
+                        filter: user ? `recipient_id=eq.${user.id}` : undefined
+                    },
+                    async (payload) => {
+                        const newNotif = payload.new as Notification;
 
-                    // Add to store
-                    set(state => ({
-                        notifications: [newNotif, ...state.notifications],
-                        unreadCount: state.unreadCount + 1
-                    }));
+                        // Check if it belongs to me (double check)
+                        const { data: { user } } = await supabase.auth.getUser();
+                        // payload.new might not have all fields if RLS masks them, but INSERT usually has them
 
-                    // Play sound
-                    const audio = new Audio('/notification.mp3'); // TODO: Add sound file
-                    audio.play().catch(e => console.log('Audio play failed', e));
+                        // Add to store
+                        set(state => ({
+                            notifications: [newNotif, ...state.notifications],
+                            unreadCount: state.unreadCount + 1
+                        }));
 
-                    // Show system notification if in background
-                    if (document.visibilityState === 'hidden' && Notification.permission === 'granted') {
-                        new Notification(newNotif.title, {
-                            body: newNotif.body,
-                            icon: '/icons/icon-192.png'
-                        });
+                        // Play sound
+                        const audio = new Audio('/notification.mp3'); // TODO: Add sound file
+                        audio.play().catch(e => console.log('Audio play failed', e));
+
+                        // Show system notification if in background
+                        if (document.visibilityState === 'hidden' && Notification.permission === 'granted') {
+                            new Notification(newNotif.title, {
+                                body: newNotif.body,
+                                icon: '/icons/icon-192.png'
+                            });
+                        }
                     }
-                }
-            )
-            .subscribe();
+                )
+                .subscribe();
 
-        // 2. Listen to Foreground FCM messages
-        onMessageListener().then((payload: any) => {
-            console.log('Foreground FCM Message:', payload);
-            // Can handle extra logic here
-        });
+            // 2. Listen to Foreground FCM messages
+            onMessageListener().then((payload: any) => {
+                console.log('Foreground FCM Message:', payload);
+                // Can handle extra logic here
+            });
 
+        }); // End getUser()
         return () => {
-            supabase.removeChannel(channel);
+            // Cleanup: unsubscribe from the channel
+            // Note: getChannels() is the correct method in Supabase JS v2
+            try {
+                const channels = supabase.getChannels();
+                const userNotificationChannel = channels.find(c => c.topic === 'user-notifications');
+                if (userNotificationChannel) {
+                    supabase.removeChannel(userNotificationChannel);
+                }
+            } catch (e) {
+                console.warn('Error cleaning up notification channel:', e);
+            }
         };
     }
 }));

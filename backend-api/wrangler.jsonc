@@ -1,0 +1,13 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "appbanhang-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-01-24",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "vars": {
+    "DATABASE_URL": "postgresql://neondb_owner:npg_sabPi8G2kYDB@ep-royal-bonus-a1rbqyjs-pooler.ap-southeast-1.aws.neon.tech/neondb?sslmode=require",
+    "JWT_SECRET": "your-jwt-secret-key-change-in-production"
+  }
+}

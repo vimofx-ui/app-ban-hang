@@ -13,6 +13,9 @@ import { useSupplierStore } from '@/stores/supplierStore';
 import { useBrandStore } from '@/stores/brandStore';
 import { useAuthStore } from '@/stores/authStore';
 import { Loading } from '@/components/common/Loading';
+import { Pagination } from '@/components/common/Pagination';
+import { supabase } from '@/lib/supabase';
+import { toast } from 'sonner';
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; bgColor: string; icon: any }> = {
     draft: { label: 'Nháp', color: 'text-gray-700', bgColor: 'bg-gray-100', icon: FileText },
@@ -40,7 +43,10 @@ export function PurchaseOrdersPage() {
     const authStoreBrandId = useAuthStore(state => state.brandId);
     const brandId = brandStoreBrandId || authStoreBrandId;
 
-    const { purchaseOrders, isLoading, fetchPurchaseOrders, deletePurchaseOrder } = usePurchaseOrderStore();
+    const {
+        purchaseOrders, isLoading, fetchPurchaseOrders, deletePurchaseOrder,
+        currentPage, pageSize, totalOrders, setCurrentPage, setPageSize
+    } = usePurchaseOrderStore();
     const { suppliers, fetchSuppliers } = useSupplierStore();
 
     // Tab & Filters
@@ -51,7 +57,85 @@ export function PurchaseOrdersPage() {
     const [paymentFilter, setPaymentFilter] = useState('');
     const [dateFrom, setDateFrom] = useState('');
     const [dateTo, setDateTo] = useState('');
-    const [showFilters, setShowFilters] = useState(false);
+
+    // Selection & Export
+    const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+    useEffect(() => {
+        // Refetch when filters/pagination change
+        console.log('[PurchaseOrdersPage] Fetching with params:', { currentPage, pageSize });
+        // Note: Currently fetchPurchaseOrders only takes 'status'. 
+        // We need to pass other filters if we want full server-side filtering.
+        // For now, we rely on the store's pagination and basic support.
+        fetchPurchaseOrders(statusFilter || undefined);
+    }, [currentPage, pageSize, statusFilter, fetchPurchaseOrders]);
+
+    const toggleSelect = (id: string) => {
+        const newSet = new Set(selectedIds);
+        if (newSet.has(id)) newSet.delete(id);
+        else newSet.add(id);
+        setSelectedIds(newSet);
+    };
+
+    const toggleSelectAll = () => {
+        if (selectedIds.size === purchaseOrders.length && purchaseOrders.length > 0) {
+            setSelectedIds(new Set());
+        } else {
+            setSelectedIds(new Set(purchaseOrders.map(p => p.id)));
+        }
+    };
+
+    const handleExport = async (type: 'selected' | 'all') => {
+        try {
+            let dataToExport: PurchaseOrder[] = [];
+            if (type === 'selected') {
+                dataToExport = purchaseOrders.filter(p => selectedIds.has(p.id));
+                if (dataToExport.length === 0) return toast.error('Chưa chọn đơn hàng nào');
+            } else {
+                if (totalOrders > 1000 && !confirm(`Xuất ${totalOrders} đơn hàng?`)) return;
+                const { data, error } = await supabase
+                    .from('purchase_orders')
+                    .select('*, suppliers(name), branches(name)')
+                    .eq('brand_id', brandId)
+                    .order('created_at', { ascending: false })
+                    .limit(1000);
+                if (error) throw error;
+                dataToExport = data.map((po: any) => ({
+                    ...po,
+                    supplier_name: po.suppliers?.name,
+                    branch_name: po.branches?.name
+                })) as PurchaseOrder[];
+            }
+
+            // CSV Generation
+            const headers = ['Mã Đơn', 'Ngày tạo', 'NCC', 'Chi nhánh', 'Trạng thái', 'Tổng tiền', 'Ghi chú'];
+            const csv = [
+                headers.join(','),
+                ...dataToExport.map(po => [
+                    po.po_number,
+                    new Date(po.created_at).toLocaleDateString('vi-VN'),
+                    `"${po.supplier_name || ''}"`,
+                    `"${po.branch_name || ''}"`,
+                    STATUS_CONFIG[po.status]?.label || po.status,
+                    po.total_amount,
+                    `"${po.notes || ''}"`
+                ].join(','))
+            ].join('\n');
+
+            const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `don-nhap_${type}_${new Date().toISOString().slice(0, 10)}.csv`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            toast.success('Đã xuất file thành công');
+        } catch (err) {
+            console.error(err);
+            toast.error('Lỗi xuất file');
+        }
+    };
 
     useEffect(() => {
         console.log('[PurchaseOrdersPage] useEffect triggered, brandId:', brandId);
@@ -150,10 +234,28 @@ export function PurchaseOrdersPage() {
                             </h1>
                         </div>
                         <div className="flex items-center gap-2 flex-wrap">
-                            <button className="flex items-center gap-1.5 px-3 py-2 text-sm text-gray-600 bg-white border border-gray-300 rounded-lg hover:bg-gray-50">
-                                <Download size={16} />
-                                <span className="hidden sm:inline">Xuất file</span>
-                            </button>
+                            <div className="relative group">
+                                <button className="flex items-center gap-1.5 px-3 py-2 text-sm text-gray-600 bg-white border border-gray-300 rounded-lg hover:bg-gray-50">
+                                    <Download size={16} />
+                                    <span className="hidden sm:inline">Xuất file</span>
+                                    <ChevronDown size={14} />
+                                </button>
+                                <div className="absolute right-0 mt-2 w-48 bg-white rounded-xl shadow-xl border border-gray-100 hidden group-hover:block z-50 p-1">
+                                    <button
+                                        onClick={() => handleExport('selected')}
+                                        disabled={selectedIds.size === 0}
+                                        className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-lg disabled:opacity-50"
+                                    >
+                                        Xuất đã chọn ({selectedIds.size})
+                                    </button>
+                                    <button
+                                        onClick={() => handleExport('all')}
+                                        className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-lg"
+                                    >
+                                        Xuất tất cả ({totalOrders})
+                                    </button>
+                                </div>
+                            </div>
                             <button className="flex items-center gap-1.5 px-3 py-2 text-sm text-gray-600 bg-white border border-gray-300 rounded-lg hover:bg-gray-50">
                                 <Upload size={16} />
                                 <span className="hidden sm:inline">Nhập file</span>
@@ -290,7 +392,12 @@ export function PurchaseOrdersPage() {
                             <thead className="bg-gray-50 border-b border-gray-200">
                                 <tr>
                                     <th className="w-10 px-4 py-3">
-                                        <input type="checkbox" className="rounded border-gray-300" />
+                                        <input
+                                            type="checkbox"
+                                            className="rounded border-gray-300"
+                                            checked={selectedIds.size === purchaseOrders.length && purchaseOrders.length > 0}
+                                            onChange={toggleSelectAll}
+                                        />
                                     </th>
                                     <th className="text-left px-4 py-3 text-xs font-semibold text-gray-600 uppercase">Mã đơn nhập</th>
                                     <th className="text-left px-4 py-3 text-xs font-semibold text-gray-600 uppercase">Ngày tạo</th>
@@ -315,7 +422,12 @@ export function PurchaseOrdersPage() {
                                             onClick={() => navigate(`/nhap-hang/${po.id}`)}
                                         >
                                             <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
-                                                <input type="checkbox" className="rounded border-gray-300" />
+                                                <input
+                                                    type="checkbox"
+                                                    className="rounded border-gray-300"
+                                                    checked={selectedIds.has(po.id)}
+                                                    onChange={() => toggleSelect(po.id)}
+                                                />
                                             </td>
                                             <td className="px-4 py-3">
                                                 <span className="font-medium text-blue-600 hover:underline">
@@ -439,6 +551,17 @@ export function PurchaseOrdersPage() {
                             >
                                 Tạo đơn nhập hàng đầu tiên
                             </button>
+                        </div>
+                    )}
+                    {purchaseOrders.length > 0 && (
+                        <div className="border-t px-4">
+                            <Pagination
+                                currentPage={currentPage}
+                                totalItems={totalOrders}
+                                pageSize={pageSize}
+                                onPageChange={setCurrentPage}
+                                onPageSizeChange={(size) => { setPageSize(size); setCurrentPage(1); }}
+                            />
                         </div>
                     )}
                 </div>

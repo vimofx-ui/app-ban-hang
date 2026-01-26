@@ -160,6 +160,14 @@ interface PurchaseOrderState {
     // Realtime Subscription
     subscribeToRealtimeUpdates: () => void;
     unsubscribeFromRealtimeUpdates: () => void;
+
+
+    // Pagination
+    totalOrders: number;
+    currentPage: number;
+    pageSize: number;
+    setCurrentPage: (page: number) => void;
+    setPageSize: (size: number) => void;
 }
 
 export interface SuggestedOrder {
@@ -185,7 +193,15 @@ export const usePurchaseOrderStore = create<PurchaseOrderState>((set, get) => ({
     goodsReceipts: [],
     currentReceipt: null,
     isLoading: false,
+
     error: null,
+    // Pagination Defaults
+    totalOrders: 0,
+    currentPage: 1,
+    pageSize: 20,
+
+    setCurrentPage: (page: number) => set({ currentPage: page }),
+    setPageSize: (size: number) => set({ pageSize: size }),
 
     fetchPurchaseOrders: async (status?: string) => {
         if (!isSupabaseConfigured()) {
@@ -203,6 +219,10 @@ export const usePurchaseOrderStore = create<PurchaseOrderState>((set, get) => ({
 
             if (!brandId) throw new Error('No brand selected');
 
+            const { currentPage, pageSize } = get();
+            const from = (currentPage - 1) * pageSize;
+            const to = from + pageSize - 1;
+
             let query = supabase
                 .from('purchase_orders')
                 .select(`
@@ -210,17 +230,18 @@ export const usePurchaseOrderStore = create<PurchaseOrderState>((set, get) => ({
                     suppliers(name),
                     branches(name),
                     purchase_order_items(count)
-                `)
+                `, { count: 'exact' })
                 .eq('brand_id', brandId)
-                .order('created_at', { ascending: false });
+                .order('created_at', { ascending: false })
+                .range(from, to);
 
             if (status && status !== 'all') {
                 query = query.eq('status', status);
             }
 
-            const { data, error } = await query;
+            const { data, error, count } = await query;
 
-            console.log('[PO Store] Query result:', { data, error, count: data?.length });
+            console.log('[PO Store] Query result:', { data, error, count });
 
             if (error) throw error;
 
@@ -232,7 +253,7 @@ export const usePurchaseOrderStore = create<PurchaseOrderState>((set, get) => ({
             }));
 
             console.log('[PO Store] Setting purchaseOrders:', mapped.length, 'items');
-            set({ purchaseOrders: mapped, isLoading: false });
+            set({ purchaseOrders: mapped, totalOrders: count || 0, isLoading: false });
         } catch (err: any) {
             console.error('[PO Store] Error fetching POs:', err);
             set({ error: err.message, isLoading: false });

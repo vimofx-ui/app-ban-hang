@@ -41,52 +41,48 @@ export function useDomainResolver() {
                 const hostname = window.location.hostname;
                 console.log('[DomainResolver] Hostname:', hostname);
 
+                // Get root domain from env or default to bangopos.com
+                const ROOT_DOMAIN = import.meta.env.VITE_ROOT_DOMAIN || 'bangopos.com';
+
                 // Danh sách các subdomain đặc biệt không phải là brand
-                const RESERVED_SUBDOMAINS = ['www', 'api', 'admin', 'app', 'dashboard', 'staging', 'dev'];
-
-                // Danh sách domain chính (không có subdomain)
-                const MAIN_DOMAINS = ['localhost', 'bangopos.com', 'vercel.app'];
-
-                // Tách hostname thành các phần
-                // Ví dụ: cafeabc.bangopos.com -> ['cafeabc', 'bangopos', 'com']
-                // Ví dụ: cafeabc.localhost -> ['cafeabc', 'localhost']
-                const parts = hostname.split('.');
+                const RESERVED_SUBDOMAINS = ['www', 'api', 'admin', 'app', 'dashboard', 'staging', 'dev', 'pos'];
 
                 let subdomain: string | null = null;
 
                 // Xử lý localhost
                 if (hostname === 'localhost' || hostname === '127.0.0.1') {
-                    // Không có subdomain trên localhost thường
                     console.log('[DomainResolver] Main localhost, no subdomain');
-                    setDomainInfo({
-                        brandId: null,
-                        brandSlug: null,
-                        brandName: null,
-                        isResolved: true,
-                        isLoading: false,
-                        error: null
-                    });
-                    return;
+                    // Reset
                 }
-
                 // Xử lý subdomain.localhost (vd: cafeabc.localhost)
-                if (parts.length === 2 && parts[1] === 'localhost') {
-                    subdomain = parts[0];
-                    console.log('[DomainResolver] Local subdomain detected:', subdomain);
+                else if (hostname.endsWith('.localhost')) {
+                    const parts = hostname.split('.');
+                    if (parts.length > 1) {
+                        subdomain = parts[0];
+                        console.log('[DomainResolver] Local subdomain detected:', subdomain);
+                    }
                 }
-
-                // Xử lý subdomain.bangopos.com (vd: cafeabc.bangopos.com)
-                if (parts.length === 3 && parts[1] === 'bangopos' && parts[2] === 'com') {
-                    subdomain = parts[0];
+                // Xử lý Production Domain (vd: cafeabc.yourdomain.com)
+                else if (hostname.endsWith(`.${ROOT_DOMAIN}`)) {
+                    // domain: cafeabc.yourdomain.com
+                    // root: yourdomain.com
+                    // -> cafeabc
+                    const partToRemove = `.${ROOT_DOMAIN}`;
+                    subdomain = hostname.substring(0, hostname.length - partToRemove.length);
                     console.log('[DomainResolver] Production subdomain detected:', subdomain);
                 }
+                // Xử lý Vercel/Cloudflare Preview
+                else if (hostname.endsWith('.vercel.app') || hostname.endsWith('.pages.dev')) {
+                    console.log('[DomainResolver] Preview environment, skipping subdomain');
+                }
 
-                // Xử lý subdomain trên Vercel preview (vd: cafeabc-bangopos.vercel.app)
-                // Hoặc Cloudflare Pages (vd: bango-pos.pages.dev)
-                if (hostname.endsWith('.vercel.app') || hostname.endsWith('.pages.dev')) {
-                    // Tạm thời bỏ qua subdomain trên các nền tảng này để tránh lỗi "Store not found"
-                    // khi user truy cập vào root domain của deployment
-                    console.log('[DomainResolver] Vercel/Cloudflare preview, skipping subdomain resolution');
+                // Nếu subdomain là reserved, bỏ qua
+                if (subdomain && RESERVED_SUBDOMAINS.includes(subdomain.toLowerCase())) {
+                    console.log('[DomainResolver] Reserved subdomain, skipping:', subdomain);
+                    subdomain = null;
+                }
+
+                if (!subdomain) {
                     setDomainInfo({
                         brandId: null,
                         brandSlug: null,
@@ -201,8 +197,9 @@ export function getBrandUrl(brandSlug: string): string {
         return `http://${brandSlug}.localhost${port}`;
     }
 
-    // Production: https://cafeabc.bangopos.com
-    return `https://${brandSlug}.bangopos.com`;
+    // Production: https://cafeabc.yourdomain.com
+    const ROOT_DOMAIN = import.meta.env.VITE_ROOT_DOMAIN || 'bangopos.com';
+    return `https://${brandSlug}.${ROOT_DOMAIN}`;
 }
 
 /**

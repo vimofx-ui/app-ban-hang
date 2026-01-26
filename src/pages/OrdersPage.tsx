@@ -1,5 +1,7 @@
-import { useState, useEffect } from 'react';
-import { useOrderStore, subscribeOrders } from '@/stores/orderStore';
+import React, { useState, useEffect } from 'react';
+import { useOrderStore } from '@/stores/orderStore';
+import { supabase } from '@/lib/supabase';
+import { Pagination } from '@/components/common/Pagination';
 import { useAuthStore } from '@/stores/authStore';
 import { formatVND } from '@/lib/cashReconciliation';
 import { cn } from '@/lib/utils';
@@ -7,7 +9,7 @@ import type { Order, OrderItem, OrderStatus } from '@/types';
 import { ProductLink } from '@/components/products/ProductLink';
 import { OrderStatusBadge } from '@/components/orders/OrderStatusBadge';
 import { OrderDetailsModal } from '@/components/orders/OrderDetailsModal';
-import { Pagination } from '@/components/common/Pagination';
+
 
 // ... imports
 import { usePrint } from '@/hooks/usePrint';
@@ -18,21 +20,114 @@ import { DEFAULT_SHIPPING_LABEL_CONFIG, type ShippingLabelConfig as TemplateConf
 
 import { OrderStats } from '@/components/orders/OrderStats';
 import { CompactOrderDetails } from '@/components/orders/CompactOrderDetails';
-import { ChevronRight, ChevronDown, Search, Filter, ExternalLink, MoreVertical, Printer, ArrowUpRight, ArrowDownLeft, Clock, CheckCircle, XCircle, Truck, Package } from 'lucide-react';
+import { ChevronRight, ChevronDown, Search, Filter, ExternalLink, MoreVertical, Printer, ArrowUpRight, ArrowDownLeft, Clock, CheckCircle, XCircle, Truck, Package, Download } from 'lucide-react';
 import { toast } from 'sonner';
 
 export const OrdersPage = () => {
-    const { orders, isLoading, loadOrders, processReturn, updateOrder, finalizeDeliveryOrder } = useOrderStore();
+    const {
+        orders, isLoading, loadOrders, processReturn, updateOrder, finalizeDeliveryOrder,
+        subscribeToOrders, unsubscribeOrders,
+        currentPage, pageSize, totalOrders, setCurrentPage, setPageSize,
+        activeStatus, searchQuery, setActiveStatus, setSearchQuery
+    } = useOrderStore();
     const { user } = useAuthStore();
-    const [searchQuery, setSearchQuery] = useState('');
-    const [activeStatus, setActiveStatus] = useState<OrderStatus | 'all'>('all');
+    // Removed local state for filters
     const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
     const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
     const [returnOrder, setReturnOrder] = useState<Order | null>(null);
-    const [currentPage, setCurrentPage] = useState(1);
-    const [pageSize, setPageSize] = useState(20);
     const { printReturnReceipt, printSalesReceipt } = usePrint();
     const { printSettings, shippingLabelConfig } = useSettingsStore();
+
+    // Selection & Export
+    const [selectedOrderIds, setSelectedOrderIds] = useState<Set<string>>(new Set());
+    const [isExporting, setIsExporting] = useState(false);
+
+    const toggleSelectOrder = (id: string) => {
+        const newSelected = new Set(selectedOrderIds);
+        if (newSelected.has(id)) {
+            newSelected.delete(id);
+        } else {
+            newSelected.add(id);
+        }
+        setSelectedOrderIds(newSelected);
+    };
+
+    const toggleSelectAll = () => {
+        if (selectedOrderIds.size === paginatedOrders.length && paginatedOrders.length > 0) {
+            setSelectedOrderIds(new Set());
+        } else {
+            setSelectedOrderIds(new Set(paginatedOrders.map(o => o.id)));
+        }
+    };
+
+    const handleExport = async (type: 'selected' | 'all') => {
+        setIsExporting(true);
+        try {
+            let ordersToExport: Order[] = [];
+
+            if (type === 'selected') {
+                ordersToExport = orders.filter(o => selectedOrderIds.has(o.id));
+                if (ordersToExport.length === 0) {
+                    toast.error('Vui lòng chọn đơn hàng để xuất');
+                    return;
+                }
+            } else {
+                // Export All - Fetch all matching current filters
+                // Warning: This can be heavy. Limit to 1000 for safety or confirm?
+                if (totalOrders > 1000) {
+                    if (!confirm(`Bạn sắp xuất ${totalOrders} đơn hàng. Việc này có thể mất thời gian. Tiếp tục?`)) return;
+                }
+
+                // We need a way to fetch ALL matching filters, not just current page.
+                // For now, let's just use the current loaded orders if user hasn't paginated much, 
+                // OR we strictly fetch from API (safest but heavy Egress).
+                // "limit: 1000" is a safe bet for "All" in this context without a dedicated backend export job.
+
+                // Temporary: Export visible + memory orders? Or re-fetch?
+                // Proper way: Re-fetch with same filters but no limit (or high limit).
+                const { data, error } = await supabase
+                    .from('orders')
+                    .select(`*, order_items (*, product:products(*)), customer:customers(*)`)
+                    .order('created_at', { ascending: false })
+                    .limit(1000); // Constraint
+
+                if (error) throw error;
+                ordersToExport = data as Order[];
+            }
+
+            // Convert to CSV/Excel logic (Simplified CSV for now)
+            const headers = ['Mã đơn', 'Khách hàng', 'SĐT', 'Tổng tiền', 'Trạng thái', 'Ngày tạo', 'Ghi chú'];
+            const csvContent = [
+                headers.join(','),
+                ...ordersToExport.map(o => [
+                    o.order_number,
+                    `"${o.customer?.name || 'Khách lẻ'}"`,
+                    `"${o.customer?.phone || ''}"`,
+                    o.total_amount,
+                    o.status,
+                    new Date(o.created_at).toLocaleDateString('vi-VN'),
+                    `"${o.notes || ''}"`
+                ].join(','))
+            ].join('\n');
+
+            const blob = new Blob([`\uFEFF${csvContent}`], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `don-hang_${type}_${new Date().toISOString().slice(0, 10)}.csv`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+
+            toast.success(`Đã xuất ${ordersToExport.length} đơn hàng`);
+            setSelectedOrderIds(new Set()); // Reset selection
+        } catch (error) {
+            console.error(error);
+            toast.error('Lỗi khi xuất file');
+        } finally {
+            setIsExporting(false);
+        }
+    };
 
     // Sync selectedOrder with orders list to ensure UI updates when status changes
     useEffect(() => {
@@ -83,18 +178,14 @@ export const OrdersPage = () => {
 
     useEffect(() => {
         loadOrders();
-    }, [loadOrders]);
+        // subscribeToOrders(); // Re-enable if efficient
+        return () => {
+            unsubscribeOrders();
+        };
+    }, [loadOrders, subscribeToOrders, unsubscribeOrders, currentPage, pageSize, activeStatus, searchQuery]); // Add all filter deps
 
-    const filteredOrders = orders.filter(o =>
-        (activeStatus === 'all' || o.status === activeStatus) &&
-        (o.order_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            o.customer?.name.toLowerCase().includes(searchQuery.toLowerCase()))
-    );
-
-    const paginatedOrders = filteredOrders.slice(
-        (currentPage - 1) * pageSize,
-        currentPage * pageSize
-    );
+    // filteredOrders is now just orders because filtering happens on server
+    const paginatedOrders = orders; // Already paginated from server
 
     const handleReturn = async (items: { itemId: string; quantity: number }[], reason: string) => {
         if (!returnOrder) return;
@@ -162,6 +253,31 @@ export const OrdersPage = () => {
                             <p className="hidden md:block text-sm text-gray-500 mt-1">Theo dõi và xử lý các đơn hàng từ mọi kênh bán</p>
                         </div>
                         <div className="flex gap-2 w-full md:w-auto">
+                            {/* Export Button */}
+                            <div className="relative group">
+                                <button className="p-2 md:px-4 md:py-2 bg-white border border-gray-200 hover:bg-blue-50 hover:border-blue-200 hover:text-blue-700 rounded-lg text-sm font-medium transition-all shadow-sm flex items-center gap-2">
+                                    <span>📥</span>
+                                    <span className="hidden md:inline">Xuất file</span>
+                                    <ChevronDown className="w-4 h-4" />
+                                </button>
+                                <div className="absolute right-0 mt-2 w-48 bg-white rounded-xl shadow-xl border border-gray-100 hidden group-hover:block z-50 p-1">
+                                    <button
+                                        onClick={() => handleExport('selected')}
+                                        disabled={selectedOrderIds.size === 0}
+                                        className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-between"
+                                    >
+                                        <span>Xuất đã chọn</span>
+                                        <span className="bg-gray-100 text-gray-600 text-[10px] px-1.5 py-0.5 rounded-full">{selectedOrderIds.size}</span>
+                                    </button>
+                                    <button
+                                        onClick={() => handleExport('all')}
+                                        className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-lg"
+                                    >
+                                        Xuất tất cả ({totalOrders})
+                                    </button>
+                                </div>
+                            </div>
+
                             <button
                                 onClick={() => loadOrders()}
                                 className="p-2 md:px-4 md:py-2 bg-white border border-gray-200 hover:bg-green-50 hover:border-green-200 hover:text-green-700 rounded-lg text-sm font-medium transition-all shadow-sm flex items-center gap-2"
@@ -234,7 +350,7 @@ export const OrdersPage = () => {
 
             <main className="container-app py-6">
                 {isLoading ? <div className="text-center py-12">Đang tải...</div> : (
-                    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
+                    <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                         {/* Mobile Cards */}
                         <div className="lg:hidden divide-y divide-gray-100">
                             {paginatedOrders.map((order) => (
@@ -263,18 +379,29 @@ export const OrdersPage = () => {
                                         </div>
                                     </div>
 
-                                    <div className="flex items-center justify-between">
-                                        <div className="flex flex-col">
-                                            <span className="text-xs text-gray-500 mb-0.5">Tổng tiền</span>
-                                            <span className="font-bold text-green-600 text-lg">{formatVND(order.total_amount)}</span>
-                                        </div>
-                                        <div className={cn(
-                                            "px-3 py-1 rounded-lg text-xs font-medium border",
-                                            order.payment_status === 'paid' ? "bg-green-50 text-green-700 border-green-200" :
-                                                order.payment_status === 'partially_paid' ? "bg-yellow-50 text-yellow-700 border-yellow-200" :
-                                                    "bg-red-50 text-red-700 border-red-200"
-                                        )}>
-                                            {order.payment_status === 'paid' ? 'Đã thanh toán' : order.payment_status === 'partially_paid' ? 'Thanh toán 1 phần' : 'Chưa thanh toán'}
+                                    <div className="flex items-start justify-between mb-3">
+                                        <div className="flex items-center gap-3">
+                                            <input
+                                                type="checkbox"
+                                                checked={selectedOrderIds.has(order.id)}
+                                                onChange={(e) => {
+                                                    e.stopPropagation();
+                                                    toggleSelectOrder(order.id);
+                                                }}
+                                                className="w-4 h-4 rounded border-gray-300 text-green-600 focus:ring-green-500"
+                                            />
+                                            <div className="flex flex-col">
+                                                <span className="text-xs text-gray-500 mb-0.5">Tổng tiền</span>
+                                                <span className="font-bold text-green-600 text-lg">{formatVND(order.total_amount)}</span>
+                                            </div>
+                                            <div className={cn(
+                                                "px-3 py-1 rounded-lg text-xs font-medium border",
+                                                order.payment_status === 'paid' ? "bg-green-50 text-green-700 border-green-200" :
+                                                    order.payment_status === 'partially_paid' ? "bg-yellow-50 text-yellow-700 border-yellow-200" :
+                                                        "bg-red-50 text-red-700 border-red-200"
+                                            )}>
+                                                {order.payment_status === 'paid' ? 'Đã thanh toán' : order.payment_status === 'partially_paid' ? 'Thanh toán 1 phần' : 'Chưa thanh toán'}
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
@@ -285,7 +412,14 @@ export const OrdersPage = () => {
                         <table className="hidden lg:table w-full">
                             <thead className="bg-green-50 border-b border-green-100">
                                 <tr>
-                                    <th className="w-10 px-3 py-3"></th>
+                                    <th className="w-10 px-3 py-3">
+                                        <input
+                                            type="checkbox"
+                                            checked={selectedOrderIds.size === paginatedOrders.length && paginatedOrders.length > 0}
+                                            onChange={toggleSelectAll}
+                                            className="w-4 h-4 rounded border-gray-300 text-green-600 focus:ring-green-500"
+                                        />
+                                    </th>
                                     <th className="px-6 py-3 text-left text-xs font-semibold text-green-700 uppercase">Mã đơn hàng</th>
                                     <th className="px-6 py-3 text-left text-xs font-semibold text-green-700 uppercase">Ngày tạo</th>
                                     <th className="px-6 py-3 text-left text-xs font-semibold text-green-700 uppercase">Tên khách hàng</th>
@@ -299,10 +433,16 @@ export const OrdersPage = () => {
                                 {paginatedOrders.map((order) => {
                                     const isExpanded = expandedOrderId === order.id;
                                     return (
-                                        <>
-                                            <tr key={order.id} className={cn("hover:bg-green-50/30 transition-colors cursor-pointer", isExpanded ? "bg-green-50/50" : "")} onClick={() => toggleExpand(order.id)}>
-                                                <td className="px-3 py-4 text-center">
-                                                    <button onClick={(e) => toggleExpand(order.id, e)} className="p-1 hover:bg-green-200 rounded text-gray-400 hover:text-green-600">
+                                        <React.Fragment key={order.id}>
+                                            <tr className={cn("hover:bg-green-50/30 transition-colors cursor-pointer", isExpanded ? "bg-green-50/50" : "")} onClick={() => toggleExpand(order.id)}>
+                                                <td className="px-3 py-4 text-center" onClick={e => e.stopPropagation()}>
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={selectedOrderIds.has(order.id)}
+                                                        onChange={() => toggleSelectOrder(order.id)}
+                                                        className="w-4 h-4 rounded border-gray-300 text-green-600 focus:ring-green-500 mr-2"
+                                                    />
+                                                    <button onClick={(e) => toggleExpand(order.id, e)} className="p-1 hover:bg-green-200 rounded text-gray-400 hover:text-green-600 inline-block align-middle">
                                                         {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                                                     </button>
                                                 </td>
@@ -353,7 +493,7 @@ export const OrdersPage = () => {
                                                         <button onClick={(e) => { e.stopPropagation(); handleFinalize(order.id); }} className="text-green-600 hover:text-green-800 text-sm font-bold bg-green-50 px-2 py-1 rounded">Hoàn tất</button>
                                                     )}
                                                 </td>
-                                            </tr >
+                                            </tr>
                                             {isExpanded && (
                                                 <tr>
                                                     <td colSpan={8} className="p-0 border-b border-gray-100">
@@ -367,9 +507,8 @@ export const OrdersPage = () => {
                                                         />
                                                     </td>
                                                 </tr>
-                                            )
-                                            }
-                                        </>
+                                            )}
+                                        </React.Fragment>
                                     );
                                 })}
                             </tbody>
@@ -379,16 +518,16 @@ export const OrdersPage = () => {
                         <div className="border-t px-4">
                             <Pagination
                                 currentPage={currentPage}
-                                totalItems={filteredOrders.length}
+                                totalItems={totalOrders}
                                 pageSize={pageSize}
                                 onPageChange={setCurrentPage}
                                 onPageSizeChange={(size) => { setPageSize(size); setCurrentPage(1); }}
+                                pageSizeOptions={[20, 50, 100]}
                             />
                         </div>
                     </div>
-                )
-                }
-            </main >
+                )}
+            </main>
 
             {selectedOrder && (
                 <OrderDetailsModal
@@ -399,16 +538,14 @@ export const OrdersPage = () => {
                 />
             )}
 
-            {
-                returnOrder && (
-                    <ReturnOrderModal
-                        order={returnOrder}
-                        onClose={() => setReturnOrder(null)}
-                        onConfirm={handleReturn}
-                    />
-                )
-            }
-        </div >
+            {returnOrder && (
+                <ReturnOrderModal
+                    order={returnOrder}
+                    onClose={() => setReturnOrder(null)}
+                    onConfirm={handleReturn}
+                />
+            )}
+        </div>
     );
 }
 

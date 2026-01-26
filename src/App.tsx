@@ -2,8 +2,8 @@
 // GROCERY POS - MAIN APP WITH AUTHENTICATION
 // =============================================================================
 
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
-import { useEffect } from 'react';
+import { BrowserRouter, Routes, Route, Navigate, useLocation, Outlet } from 'react-router-dom';
+import React, { useEffect } from 'react';
 import { BrandGuard } from '@/components/auth/BrandGuard';
 
 // Pages
@@ -122,6 +122,77 @@ function RequireActive({ children }: { children: React.ReactNode }) {
 }
 
 // =============================================================================
+// ERROR BOUNDARY - Catch and display errors from child components
+// =============================================================================
+
+interface ErrorBoundaryState {
+    hasError: boolean;
+    error: Error | null;
+    errorInfo: React.ErrorInfo | null;
+}
+
+class LayoutErrorBoundary extends React.Component<{ children: React.ReactNode }, ErrorBoundaryState> {
+    constructor(props: { children: React.ReactNode }) {
+        super(props);
+        this.state = { hasError: false, error: null, errorInfo: null };
+    }
+
+    static getDerivedStateFromError(error: Error): Partial<ErrorBoundaryState> {
+        return { hasError: true, error };
+    }
+
+    componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+        console.error('LayoutErrorBoundary caught an error:', error, errorInfo);
+        this.setState({ errorInfo });
+    }
+
+    render() {
+        if (this.state.hasError) {
+            return (
+                <div className="min-h-screen bg-red-50 flex items-center justify-center p-6">
+                    <div className="bg-white rounded-xl shadow-lg p-6 max-w-2xl w-full border-2 border-red-200">
+                        <h1 className="text-2xl font-bold text-red-600 mb-4">⚠️ Lỗi MainLayout</h1>
+                        <div className="bg-red-100 rounded-lg p-4 mb-4">
+                            <h2 className="font-bold text-red-800 mb-2">Error Message:</h2>
+                            <pre className="text-sm text-red-700 whitespace-pre-wrap break-words">
+                                {this.state.error?.message || 'Unknown error'}
+                            </pre>
+                        </div>
+                        <div className="bg-gray-100 rounded-lg p-4 mb-4">
+                            <h2 className="font-bold text-gray-800 mb-2">Stack Trace:</h2>
+                            <pre className="text-xs text-gray-600 whitespace-pre-wrap break-words overflow-auto max-h-60">
+                                {this.state.error?.stack || 'No stack trace'}
+                            </pre>
+                        </div>
+                        <div className="bg-gray-100 rounded-lg p-4">
+                            <h2 className="font-bold text-gray-800 mb-2">Component Stack:</h2>
+                            <pre className="text-xs text-gray-600 whitespace-pre-wrap break-words overflow-auto max-h-40">
+                                {this.state.errorInfo?.componentStack || 'No component stack'}
+                            </pre>
+                        </div>
+                        <div className="mt-4 flex gap-2">
+                            <button
+                                onClick={() => window.location.reload()}
+                                className="px-4 py-2 bg-blue-600 text-white rounded-lg font-medium"
+                            >
+                                Tải lại trang
+                            </button>
+                            <button
+                                onClick={() => window.location.href = '/dang-nhap'}
+                                className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg font-medium"
+                            >
+                                Về trang đăng nhập
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+        return this.props.children;
+    }
+}
+
+// =============================================================================
 // MAIN APP
 // =============================================================================
 
@@ -141,10 +212,6 @@ function App() {
             <DomainProvider>
                 <BrandGuard>
                     <Routes>
-                        {/* Public Routes - Auth Pages */}
-                        <Route path="/dang-nhap" element={<LoginPage />} />
-                        <Route path="/dang-ky" element={<RegisterPage />} />
-                        <Route path="/quen-mat-khau" element={<ForgotPasswordPage />} />
                         {/* Public Routes - Auth Pages */}
                         <Route path="/dang-nhap" element={<LoginPage />} />
                         <Route path="/dang-ky" element={<RegisterPage />} />
@@ -180,7 +247,9 @@ function App() {
                         {/* All other pages with sidebar (requires auth) */}
                         <Route path="/" element={
                             <RequireAuth>
-                                <MainLayout />
+                                <LayoutErrorBoundary>
+                                    <MainLayout />
+                                </LayoutErrorBoundary>
                             </RequireAuth>
                         }>
                             <Route index element={<Dashboard />} />
@@ -200,7 +269,7 @@ function App() {
                             <Route path="dat-hang-ncc" element={<ImportListPage />} />
                             <Route path="dat-hang-ncc/tao-moi" element={<ImportGoodsPage />} />
                             <Route path="dat-hang-ncc/:id" element={<ImportGoodsPage />} />
-                            <Route path="kiem-kho" element={<StockTakePage />} /> {/* Legacy */}
+                            <Route path="kiem-kho" element={<StockTakePage />} />
                             <Route path="inventory/audits" element={<StockAuditListPage />} />
                             <Route path="inventory/audit/:id" element={<StockAuditDetailPage />} />
                             <Route path="in-ma-vach" element={<BarcodePrintPage />} />
@@ -212,8 +281,6 @@ function App() {
                             <Route path="nhac-nho" element={<RemindersPage />} />
 
                             <Route path="thanh-toan" element={<BillingPage />} />
-
-
 
                             {/* Affiliate Portal Routes */}
                             <Route path="doi-tac" element={<AffiliateLayout />}>
@@ -279,6 +346,10 @@ function App() {
                             <Route path="*" element={<Navigate to="/" replace />} />
                         </Route>
                     </Routes>
+                    {/* <div className="p-10 text-center">
+                        <h1 className="text-2xl font-bold text-green-600">App Shell Loaded Successfully</h1>
+                        <p>If you see this, the white screen is caused by one of the pages inside Routes.</p>
+                    </div> */}
                     {/* PWA Install Prompt Banner */}
                     <InstallBanner />
                     <OfflineIndicator />

@@ -24,34 +24,6 @@ export function LoginPage() {
         }
     };
 
-    // --- DIAGNOSTICS ---
-    const rawSupabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-    const rawSupabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-    const debugSupabaseUrl = rawSupabaseUrl ? rawSupabaseUrl.trim() : '';
-    const [testResult, setTestResult] = useState<string | null>(null);
-
-    const testConnection = async () => {
-        setTestResult('Đang kiểm tra kết nối...');
-        try {
-            if (!debugSupabaseUrl) {
-                setTestResult('LỖI: Không có URL Supabase');
-                return;
-            }
-            console.log('Testing connection to:', debugSupabaseUrl);
-            const res = await fetch(`${debugSupabaseUrl}/rest/v1/`, {
-                headers: { 'apikey': rawSupabaseKey ? rawSupabaseKey.trim() : '' }
-            });
-            if (res.ok) {
-                setTestResult(`✅ Kết nối OK! Status: ${res.status}`);
-            } else {
-                setTestResult(`❌ Lỗi HTTP: ${res.status} ${res.statusText}`);
-            }
-        } catch (err: any) {
-            console.error('Connection failed:', err);
-            setTestResult(`❌ Lỗi Mạng: ${err.message || err} (Xem F12 Console)`);
-        }
-    };
-    // -------------------
     return (
         <div style={{
             minHeight: '100vh',
@@ -241,30 +213,6 @@ export function LoginPage() {
 
                 </div>
 
-                {/* --- DIAGNOSTICS UI (v1.3) --- */}
-                <div style={{ marginTop: '30px', borderTop: '1px dashed #e5e7eb', paddingTop: '20px' }}>
-                    <p style={{ fontSize: '12px', color: '#9ca3af', marginBottom: '8px', textAlign: 'center' }}>
-                        Debug Info (v1.3)
-                    </p>
-                    <div style={{ fontSize: '12px', fontFamily: 'monospace', color: '#6b7280', background: '#f9fafb', padding: '10px', borderRadius: '8px' }}>
-                        <div><strong>URL Length:</strong> {rawSupabaseUrl ? rawSupabaseUrl.length : 0} ký tự (Cần kiểm tra khoảng trắng thừa)</div>
-                        <div><strong>Clean URL:</strong> {debugSupabaseUrl ? debugSupabaseUrl.replace(/^(https?:\/\/[^.]+).+/, '$1...') : '(Trống)'}</div>
-                        <div style={{ marginTop: '8px' }}>
-                            <button
-                                type="button"
-                                onClick={testConnection}
-                                style={{ background: '#3b82f6', color: 'white', border: 'none', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer' }}
-                            >
-                                Kiểm tra kết nối Server (Có Trim)
-                            </button>
-                        </div>
-                        {testResult && (
-                            <div style={{ marginTop: '8px', fontWeight: 'bold', color: testResult.startsWith('✅') ? 'green' : 'red' }}>
-                                {testResult}
-                            </div>
-                        )}
-                    </div>
-                </div>
             </div>
         </div>
 

@@ -30,7 +30,7 @@ export function getBrandSlug(): string | null {
 
 export function isSuperAdminDomain(): boolean {
     const slug = getBrandSlug();
-    return slug === 'admin';
+    return slug === 'admin' || slug === 'pos';
 }
 
 export function getAppUrl(subdomain: string): string {

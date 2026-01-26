@@ -183,15 +183,6 @@ export function BranchesPage() {
                     </div>
                 )}
 
-                {/* DEBUG DIAGNOSTIC PANEL */}
-                <div style={{ backgroundColor: '#fffbeb', border: '1px solid #f59e0b', padding: '15px', borderRadius: '8px', marginBottom: '20px', fontSize: '14px', color: '#92400e' }}>
-                    <h3 style={{ fontWeight: 'bold', margin: '0 0 5px 0' }}>🔧 Thông tin kiểm tra lỗi (Debug Info)</h3>
-                    <div><strong>User ID:</strong> {user?.id || 'Chưa đăng nhập'}</div>
-                    <div><strong>Role:</strong> {user?.role || 'Không có'}</div>
-                    <div><strong>Brand ID:</strong> {brandId ? brandId : <span style={{ color: 'red', fontWeight: 'bold' }}>TRỐNG (NULL) - Nguyên nhân lỗi là đây!</span>}</div>
-                    <div><strong>Store Error:</strong> {error || 'Không có lỗi'}</div>
-                    {!brandId && <div style={{ marginTop: '10px', fontWeight: 'bold', color: 'red' }}>⚠️ CẢNH BÁO: Bạn chưa được liên kết với Thương hiệu nào. Vui lòng liên hệ Admin hệ thống hoặc thử đăng nhập lại.</div>}
-                </div>
 
                 {/* Branch List */}
                 {activeTab === 'list' && (
